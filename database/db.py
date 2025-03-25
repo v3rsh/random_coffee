@@ -7,10 +7,16 @@ from sqlalchemy.orm import sessionmaker
 from database.models import Base
 
 # Получаем URL базы данных из переменных окружения
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///database.db")
+# По умолчанию используем SQLite
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///database.sqlite3")
 
 # Создаем асинхронный движок SQLAlchemy
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL, 
+    echo=False,
+    # Следующие параметры важны для SQLite
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+)
 
 # Создаем фабрику сессий
 async_session_maker = async_sessionmaker(
