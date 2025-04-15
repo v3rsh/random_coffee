@@ -69,8 +69,10 @@ async def main():
     # Создаем диспетчер
     dp = Dispatcher(storage=storage, fsm_strategy=FSMStrategy.USER_IN_CHAT)
     
-    # Регистрируем middleware
+    # Получаем session_maker напрямую, без await
     session_maker = get_session()
+    
+    # Регистрируем middleware
     dp.update.middleware(DbSessionMiddleware(session_maker))
     
     # Регистрируем роутеры

@@ -22,30 +22,32 @@ async def weekly_pairing_job():
     """
     logger.info("Запущена еженедельная задача по созданию пар")
     
-    async for session in get_session():
-        try:
-            # Получаем всех активных пользователей
-            query = select(User).where(
-                User.is_active == True,
-                User.registration_complete == True
-            )
-            result = await session.execute(query)
-            active_users = result.scalars().all()
-            
-            # Создаем пары только если есть хотя бы 2 пользователя
-            if len(active_users) < 2:
-                logger.info("Недостаточно активных пользователей для создания пар")
-                return
-            
-            # Создаем пары и отправляем уведомления
-            paired_users = await create_pairs(session, active_users)
-            logger.info(f"Создано {len(paired_users) // 2} пар")
-            
-            # Отправляем уведомления
-            await send_pairing_notifications(paired_users)
-            
-        except Exception as e:
-            logger.error(f"Ошибка при создании пар: {e}", exc_info=True)
+    session = get_session()()
+    try:
+        # Получаем всех активных пользователей
+        query = select(User).where(
+            User.is_active == True,
+            User.registration_complete == True
+        )
+        result = await session.execute(query)
+        active_users = result.scalars().all()
+        
+        # Создаем пары только если есть хотя бы 2 пользователя
+        if len(active_users) < 2:
+            logger.info("Недостаточно активных пользователей для создания пар")
+            return
+        
+        # Создаем пары и отправляем уведомления
+        paired_users = await create_pairs(session, active_users)
+        logger.info(f"Создано {len(paired_users) // 2} пар")
+        
+        # Отправляем уведомления
+        await send_pairing_notifications(paired_users)
+        
+    except Exception as e:
+        logger.error(f"Ошибка при создании пар: {e}", exc_info=True)
+    finally:
+        await session.close()
 
 
 async def check_meetings_job():
@@ -54,31 +56,33 @@ async def check_meetings_job():
     """
     logger.info("Запущена задача проверки предстоящих встреч")
     
-    async for session in get_session():
-        try:
-            # Получаем встречи, которые состоятся в ближайший час
-            now = datetime.now()
-            one_hour_later = now + timedelta(hours=1)
-            
-            query = select(Meeting).where(
-                and_(
-                    Meeting.meeting_date >= now,
-                    Meeting.meeting_date <= one_hour_later,
-                    Meeting.is_completed == False
-                )
+    session = get_session()()
+    try:
+        # Получаем встречи, которые состоятся в ближайший час
+        now = datetime.now()
+        one_hour_later = now + timedelta(hours=1)
+        
+        query = select(Meeting).where(
+            and_(
+                Meeting.meeting_date >= now,
+                Meeting.meeting_date <= one_hour_later,
+                Meeting.is_completed == False
             )
-            
-            result = await session.execute(query)
-            upcoming_meetings = result.scalars().all()
-            
-            # Отправляем напоминания
-            for meeting in upcoming_meetings:
-                await send_meeting_reminder(bot, session, meeting.id)
-            
-            logger.info(f"Отправлены напоминания для {len(upcoming_meetings)} встреч")
-            
-        except Exception as e:
-            logger.error(f"Ошибка при проверке встреч: {e}", exc_info=True)
+        )
+        
+        result = await session.execute(query)
+        upcoming_meetings = result.scalars().all()
+        
+        # Отправляем напоминания
+        for meeting in upcoming_meetings:
+            await send_meeting_reminder(bot, session, meeting.id)
+        
+        logger.info(f"Отправлены напоминания для {len(upcoming_meetings)} встреч")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке встреч: {e}", exc_info=True)
+    finally:
+        await session.close()
 
 
 async def check_feedback_job():
@@ -87,31 +91,33 @@ async def check_feedback_job():
     """
     logger.info("Запущена задача проверки фидбека")
     
-    async for session in get_session():
-        try:
-            # Получаем встречи, которые завершились вчера
-            yesterday = datetime.now() - timedelta(days=1)
-            today = datetime.now()
-            
-            query = select(Meeting).where(
-                and_(
-                    Meeting.meeting_date >= yesterday,
-                    Meeting.meeting_date <= today,
-                    Meeting.is_completed == False
-                )
+    session = get_session()()
+    try:
+        # Получаем встречи, которые завершились вчера
+        yesterday = datetime.now() - timedelta(days=1)
+        today = datetime.now()
+        
+        query = select(Meeting).where(
+            and_(
+                Meeting.meeting_date >= yesterday,
+                Meeting.meeting_date <= today,
+                Meeting.is_completed == False
             )
-            
-            result = await session.execute(query)
-            completed_meetings = result.scalars().all()
-            
-            # Отправляем запросы на фидбек
-            for meeting in completed_meetings:
-                await send_feedback_request(bot, session, meeting.id)
-            
-            logger.info(f"Отправлены запросы фидбека для {len(completed_meetings)} встреч")
-            
-        except Exception as e:
-            logger.error(f"Ошибка при проверке фидбека: {e}", exc_info=True)
+        )
+        
+        result = await session.execute(query)
+        completed_meetings = result.scalars().all()
+        
+        # Отправляем запросы на фидбек
+        for meeting in completed_meetings:
+            await send_feedback_request(bot, session, meeting.id)
+        
+        logger.info(f"Отправлены запросы фидбека для {len(completed_meetings)} встреч")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при проверке фидбека: {e}", exc_info=True)
+    finally:
+        await session.close()
 
 
 async def reactivation_reminder_job():
@@ -120,11 +126,13 @@ async def reactivation_reminder_job():
     """
     logger.info("Запущена задача напоминания неактивным пользователям")
     
-    async for session in get_session():
-        try:
-            await send_reactivation_reminder(bot, session)
-        except Exception as e:
-            logger.error(f"Ошибка при отправке напоминаний: {e}", exc_info=True)
+    session = get_session()()
+    try:
+        await send_reactivation_reminder(bot, session)
+    except Exception as e:
+        logger.error(f"Ошибка при отправке напоминаний: {e}", exc_info=True)
+    finally:
+        await session.close()
 
 
 async def create_pairs(session, users):

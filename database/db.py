@@ -29,7 +29,7 @@ async_session_maker = async_sessionmaker(
 )
 
 
-async def get_session():
+def get_session():
     """
     Возвращает фабрику сессий.
     """
