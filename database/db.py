@@ -1,7 +1,7 @@
 import os
 from typing import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker, async_scoped_session
 from sqlalchemy.orm import sessionmaker
 
 from database.models import Base
@@ -15,7 +15,11 @@ engine = create_async_engine(
     DATABASE_URL, 
     echo=False,
     # Следующие параметры важны для SQLite
-    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+    # Включаем настройки для правильной работы greenlet
+    use_native_hstore=False,
+    pool_pre_ping=True,
+    pool_recycle=3600
 )
 
 # Создаем фабрику сессий
@@ -26,12 +30,11 @@ async_session_maker = async_sessionmaker(
 )
 
 
-async def get_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_session():
     """
-    Асинхронный генератор для получения сессии базы данных.
+    Возвращает фабрику сессий.
     """
-    async with async_session_maker() as session:
-        yield session
+    return async_session_maker
 
 
 async def init_db():

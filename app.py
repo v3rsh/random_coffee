@@ -8,6 +8,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.strategy import FSMStrategy
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
+import sqlalchemy.ext.asyncio
 
 from database import init_db, get_session, SQLiteStorage
 from handlers import registration_router, feedback_router, common_router, admin_router, pairing_router
@@ -43,7 +44,10 @@ class DbSessionMiddleware:
         self.session_pool = session_pool
     
     async def __call__(self, handler, event, data):
-        async for session in self.session_pool():
+        # Используем greenlet_spawn для правильной работы с SQLAlchemy в асинхронном режиме
+        async with sqlalchemy.ext.asyncio.async_scoped_session(
+            self.session_pool, scopefunc=asyncio.current_task
+        ) as session:
             data["session"] = session
             return await handler(event, data)
 

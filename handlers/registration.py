@@ -321,13 +321,27 @@ async def process_interests_done(callback: CallbackQuery, state: FSMContext, ses
     # Получаем пользователя из базы
     user = await get_user(session, callback.from_user.id)
     
-    # Связываем пользователя с интересами
-    user.interests = []
+    # Загружаем все выбранные интересы
+    interests = []
     for interest_id in selected_interests:
-        interest = await session.get(Interest, interest_id)
+        # Используем execute вместо прямого обращения к свойству
+        result = await session.execute(select(Interest).where(Interest.id == interest_id))
+        interest = result.scalar_one_or_none()
         if interest:
-            user.interests.append(interest)
+            interests.append(interest)
+
+    # Сначала загружаем существующие интересы для избежания lazy loading
+    await session.refresh(user, ["interests"])
     
+    # Очищаем и добавляем новые интересы
+    user.interests = []
+    await session.flush()
+    
+    # Добавляем новые интересы
+    for interest in interests:
+        user.interests.append(interest)
+    
+    # Сохраняем изменения
     await session.commit()
     
     # Отвечаем на callback и обновляем сообщение
