@@ -16,8 +16,7 @@ engine = create_async_engine(
     echo=False,
     # Следующие параметры важны для SQLite
     connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
-    # Включаем настройки для правильной работы greenlet
-    use_native_hstore=False,
+    # Общие настройки для пула соединений
     pool_pre_ping=True,
     pool_recycle=3600
 )

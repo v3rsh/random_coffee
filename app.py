@@ -8,7 +8,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.strategy import FSMStrategy
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
-import sqlalchemy.ext.asyncio
 
 from database import init_db, get_session, SQLiteStorage
 from handlers import registration_router, feedback_router, common_router, admin_router, pairing_router
@@ -40,16 +39,18 @@ class DbSessionMiddleware:
     """
     Middleware для внедрения сессии базы данных в апдейты.
     """
-    def __init__(self, session_pool):
-        self.session_pool = session_pool
+    def __init__(self, session_maker):
+        self.session_maker = session_maker
     
     async def __call__(self, handler, event, data):
-        # Используем greenlet_spawn для правильной работы с SQLAlchemy в асинхронном режиме
-        async with sqlalchemy.ext.asyncio.async_scoped_session(
-            self.session_pool, scopefunc=asyncio.current_task
-        ) as session:
-            data["session"] = session
+        # Создаем новую сессию для каждого запроса
+        session = self.session_maker()
+        data["session"] = session
+        
+        try:
             return await handler(event, data)
+        finally:
+            await session.close()
 
 
 async def main():
@@ -69,7 +70,8 @@ async def main():
     dp = Dispatcher(storage=storage, fsm_strategy=FSMStrategy.USER_IN_CHAT)
     
     # Регистрируем middleware
-    dp.update.middleware(DbSessionMiddleware(get_session))
+    session_maker = get_session()
+    dp.update.middleware(DbSessionMiddleware(session_maker))
     
     # Регистрируем роутеры
     dp.include_router(registration_router)
