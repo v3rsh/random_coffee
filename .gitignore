@@ -48,4 +48,8 @@ ENV/
 
 # Dependency lock files
 Pipfile.lock
-poetry.lock 
+poetry.lock
+
+# Project specific files
+ТЗ.txt
+Копия Чат-бот.txt 

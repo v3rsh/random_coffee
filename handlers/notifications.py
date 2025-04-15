@@ -1,15 +1,21 @@
 from datetime import datetime, timedelta
 from typing import List
+import logging
 
-from aiogram import Bot
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram import Bot, Router
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 
 from database.models import Meeting, User, TopicType
-from keyboards import get_topic_name, get_topic_emoji
+from keyboards import get_topic_name, get_topic_emoji, create_rating_keyboard
 from services.meeting_service import get_meeting, get_pending_feedback_meetings
 from services.user_service import get_user
+
+# Создаем роутер для уведомлений
+notifications_router = Router()
+logger = logging.getLogger(__name__)
 
 
 async def send_meeting_notifications(session: AsyncSession, meetings: List[Meeting]):
@@ -200,3 +206,177 @@ async def send_feedback_reminders(session: AsyncSession):
                 )
             except Exception as e:
                 print(f"Ошибка при отправке напоминания о фидбеке пользователю {user.telegram_id}: {e}") 
+
+
+async def send_meeting_reminder(bot: Bot, session: AsyncSession, meeting_id: int):
+    """
+    Отправляет напоминание о встрече за час до неё.
+    
+    :param bot: Экземпляр бота для отправки сообщений
+    :param session: Сессия базы данных
+    :param meeting_id: ID встречи
+    """
+    # Получаем встречу из базы данных
+    meeting = await session.get(Meeting, meeting_id)
+    
+    if not meeting or not meeting.meeting_date:
+        logger.warning(f"Встреча {meeting_id} не найдена или не имеет даты")
+        return
+    
+    # Проверяем, что встреча еще не состоялась
+    if meeting.is_completed:
+        return
+    
+    # Получаем пользователей
+    user1 = await get_user(session, meeting.user1_id)
+    user2 = await get_user(session, meeting.user2_id)
+    
+    if not user1 or not user2:
+        logger.warning(f"Не найдены пользователи для встречи {meeting_id}")
+        return
+    
+    # Формируем сообщение напоминания
+    meeting_time = meeting.meeting_date.strftime("%H:%M")
+    location = meeting.meeting_location or "Не указано"
+    
+    reminder_message = (
+        f"☕️ *Напоминание о встрече*\n\n"
+        f"Привет, {user1.full_name}! Сегодня в {meeting_time} у тебя знакомство с {user2.full_name} в {location}.\n\n"
+        f"Пара советов для отличной встречи:\n"
+        f"- Заранее проверь ссылку (если онлайн)\n"
+        f"- Приходи на 5 минут раньше (или как минимум не опаздывай 😁)\n"
+        f"- Подумай, о чем хочешь поговорить, можешь начать с вопросов — например: «‎Какой проект был самым интересным?», «‎Какое хобби тебя вдохновляет?»\n\n"
+        f"Приятного общения! 😊"
+    )
+    
+    # Отправляем напоминание первому пользователю
+    try:
+        await bot.send_message(
+            user1.telegram_id,
+            reminder_message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке напоминания пользователю {user1.telegram_id}: {e}")
+    
+    # Отправляем напоминание второму пользователю
+    reminder_message = (
+        f"☕️ *Напоминание о встрече*\n\n"
+        f"Привет, {user2.full_name}! Сегодня в {meeting_time} у тебя знакомство с {user1.full_name} в {location}.\n\n"
+        f"Пара советов для отличной встречи:\n"
+        f"- Заранее проверь ссылку (если онлайн)\n"
+        f"- Приходи на 5 минут раньше (или как минимум не опаздывай 😁)\n"
+        f"- Подумай, о чем хочешь поговорить, можешь начать с вопросов — например: «‎Какой проект был самым интересным?», «‎Какое хобби тебя вдохновляет?»\n\n"
+        f"Приятного общения! 😊"
+    )
+    
+    try:
+        await bot.send_message(
+            user2.telegram_id,
+            reminder_message,
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке напоминания пользователю {user2.telegram_id}: {e}")
+
+
+async def send_feedback_request(bot: Bot, session: AsyncSession, meeting_id: int):
+    """
+    Отправляет запрос обратной связи после встречи.
+    
+    :param bot: Экземпляр бота для отправки сообщений
+    :param session: Сессия базы данных
+    :param meeting_id: ID встречи
+    """
+    # Получаем встречу из базы данных
+    meeting = await session.get(Meeting, meeting_id)
+    
+    if not meeting:
+        logger.warning(f"Встреча {meeting_id} не найдена")
+        return
+    
+    # Проверяем, что встреча состоялась и еще не получена обратная связь
+    if meeting.is_completed:
+        return
+    
+    # Получаем пользователей
+    user1 = await get_user(session, meeting.user1_id)
+    user2 = await get_user(session, meeting.user2_id)
+    
+    if not user1 or not user2:
+        logger.warning(f"Не найдены пользователи для встречи {meeting_id}")
+        return
+    
+    # Формируем сообщение с запросом обратной связи
+    feedback_message = (
+        f"Как прошла ваша встреча с {user2.full_name}? Оцени, пожалуйста, по шкале:\n\n"
+        f"1 🌟 - Не понравилось\n"
+        f"3 🌟 - Нормально\n"
+        f"5 🌟 - Отлично!"
+    )
+    
+    # Отправляем запрос первому пользователю
+    try:
+        await bot.send_message(
+            user1.telegram_id,
+            feedback_message,
+            reply_markup=create_rating_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке запроса обратной связи пользователю {user1.telegram_id}: {e}")
+    
+    # Формируем сообщение для второго пользователя
+    feedback_message = (
+        f"Как прошла ваша встреча с {user1.full_name}? Оцени, пожалуйста, по шкале:\n\n"
+        f"1 🌟 - Не понравилось\n"
+        f"3 🌟 - Нормально\n"
+        f"5 🌟 - Отлично!"
+    )
+    
+    # Отправляем запрос второму пользователю
+    try:
+        await bot.send_message(
+            user2.telegram_id,
+            feedback_message,
+            reply_markup=create_rating_keyboard()
+        )
+    except Exception as e:
+        logger.error(f"Ошибка при отправке запроса обратной связи пользователю {user2.telegram_id}: {e}")
+
+
+async def send_reactivation_reminder(bot: Bot, session: AsyncSession):
+    """
+    Отправляет напоминание пользователям, которые отложили участие.
+    
+    :param bot: Экземпляр бота для отправки сообщений
+    :param session: Сессия базы данных
+    """
+    # Получаем пользователей, которые отложили участие неделю назад
+    week_ago = datetime.now() - timedelta(days=7)
+    
+    query = select(User).where(
+        and_(
+            User.is_active == False,
+            User.registration_complete == True,
+            User.updated_at <= week_ago
+        )
+    )
+    
+    result = await session.execute(query)
+    inactive_users = result.scalars().all()
+    
+    for user in inactive_users:
+        # Формируем сообщение-напоминание
+        reminder_message = (
+            "Привет! Это неслучайное сообщение! Пообщаемся? 😊\n\n"
+            "Напиши «Участвую», чтобы вернуться к неслучайным встречам с коллегами."
+        )
+        
+        # Отправляем напоминание
+        try:
+            await bot.send_message(
+                user.telegram_id,
+                reminder_message
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке напоминания пользователю {user.telegram_id}: {e}") 

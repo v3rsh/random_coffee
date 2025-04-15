@@ -42,13 +42,17 @@ class User(Base):
     username = Column(String(255), nullable=True)
     full_name = Column(String(255), nullable=False)
     department = Column(String(255), nullable=True)
-    work_hours_start = Column(String(5), nullable=True)  # Формат "HH:MM"
-    work_hours_end = Column(String(5), nullable=True)  # Формат "HH:MM"
-    meeting_format = Column(SQLAlchemyEnum(MeetingFormat), default=MeetingFormat.ANY)
+    role = Column(String(255), nullable=True)
+    meeting_format = Column(SQLAlchemyEnum(MeetingFormat), nullable=True)
+    city = Column(String(255), nullable=True)
+    office = Column(String(255), nullable=True)
+    available_day = Column(String(255), nullable=True)
+    available_time = Column(String(255), nullable=True)
+    photo_id = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     registration_complete = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
-    last_active = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Связи
     topics = relationship("TopicType", secondary=user_topics, backref="users")
@@ -70,6 +74,9 @@ class User(Base):
         """Получить все встречи пользователя"""
         return self.meetings_as_user1 + self.meetings_as_user2
 
+    def __repr__(self):
+        return f"<User(telegram_id={self.telegram_id}, name={self.full_name})>"
+
 
 class Meeting(Base):
     __tablename__ = "meetings"
@@ -77,14 +84,21 @@ class Meeting(Base):
     id = Column(Integer, primary_key=True)
     user1_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     user2_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
-    scheduled_date = Column(DateTime, nullable=True)
+    meeting_date = Column(DateTime, nullable=True)
+    meeting_format = Column(SQLAlchemyEnum(MeetingFormat), nullable=True)
+    meeting_location = Column(String(255), nullable=True)
     is_confirmed = Column(Boolean, default=False)
+    is_completed = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Связи
     user1 = relationship("User", foreign_keys=[user1_id], back_populates="meetings_as_user1")
     user2 = relationship("User", foreign_keys=[user2_id], back_populates="meetings_as_user2")
     feedbacks = relationship("Feedback", back_populates="meeting")
+
+    def __repr__(self):
+        return f"<Meeting(id={self.id}, user1_id={self.user1_id}, user2_id={self.user2_id}, date={self.meeting_date})>"
 
 
 class Feedback(Base):
@@ -96,9 +110,13 @@ class Feedback(Base):
     to_user_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     rating = Column(Integer, nullable=True)  # 1-5
     comment = Column(Text, nullable=True)
+    improvement_suggestion = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     # Связи
     meeting = relationship("Meeting", back_populates="feedbacks")
     from_user = relationship("User", foreign_keys=[from_user_id], back_populates="feedbacks_given")
-    to_user = relationship("User", foreign_keys=[to_user_id], back_populates="feedbacks_received") 
+    to_user = relationship("User", foreign_keys=[to_user_id], back_populates="feedbacks_received")
+
+    def __repr__(self):
+        return f"<Feedback(id={self.id}, meeting_id={self.meeting_id}, from_user_id={self.from_user_id}, rating={self.rating})>" 

@@ -1,310 +1,439 @@
+import logging
+from datetime import datetime
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart, Command, StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import User, TopicType, MeetingFormat
+from database.models import User, Interest, MeetingFormat
+from database.interests_data import DEFAULT_INTERESTS
 from keyboards import (
-    get_start_keyboard, get_skip_keyboard, get_meeting_format_keyboard,
-    get_topics_keyboard, get_confirmation_keyboard, get_topic_name, get_topic_emoji
+    create_meeting_format_keyboard,
+    create_interest_keyboard,
+    create_yes_no_keyboard
 )
-from services.user_service import get_user, create_user, update_user, add_user_topic, remove_user_topic
+from services.user_service import get_user, create_user, update_user
 from states import RegistrationStates
 
 # Создаем роутер для регистрации
 registration_router = Router()
+logger = logging.getLogger(__name__)
 
 
-@registration_router.message(CommandStart())
-async def cmd_start(message: Message, session: AsyncSession):
+@registration_router.message(Command("start"))
+async def cmd_start(message: Message, state: FSMContext, session: AsyncSession):
     """
-    Обработчик команды /start - приветствие и начало регистрации.
+    Обработчик команды /start
     """
     user = await get_user(session, message.from_user.id)
     
+    # Если пользователь уже зарегистрирован и завершил регистрацию
     if user and user.registration_complete:
-        # Пользователь уже зарегистрирован
         await message.answer(
-            "Привет! Вы уже зарегистрированы в системе Random Coffee.\n"
-            "Каждую неделю я буду искать вам собеседника для встречи. 👋",
-            reply_markup=get_start_keyboard()
+            "Привет! Ты уже зарегистрирован в боте Неслучайно. Ожидай уведомления о новых встречах!\n\n"
+            "Используй /help чтобы узнать доступные команды."
         )
+        await state.clear()
+        return
+    
+    # Приветственное сообщение для новых пользователей
+    await message.answer(
+        "Привет! Если ты попал в этот бот, значит — это неслучайно 😌\n"
+        "Здесь ты можешь:\n"
+        "- найти единомышленников в билайне\n"
+        "- обменяться опытом\n"
+        "- обсудить интересные темы\n"
+        "- просто приятно провести время\n"
+        "Хочешь попробовать?",
+        reply_markup=create_yes_no_keyboard("Да, хочу!", "Расскажи подробнее")
+    )
+
+
+@registration_router.callback_query(F.data == "Расскажи подробнее")
+async def explain_more(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Расскажи подробнее"
+    """
+    await callback.message.edit_text(
+        "неслучайно — это:\n\n"
+        "✅ встречи с коллегами из других подразделений и городов\n"
+        "✅ 15-30 минут живого общения онлайн или в офисе\n"
+        "✅ обсуждение только интересных тебе тем\n\n"
+        "Как это работает:\n"
+        "1. Ты заполняешь короткую анкету\n"
+        "2. Я подбираю тебе коллегу с похожими интересами\n"
+        "3. Вы встречаетесь в удобное время и общаетесь\n\n"
+        "Попробуем? 😊",
+        reply_markup=create_yes_no_keyboard("Да, участвую!", "Позже")
+    )
+    await callback.answer()
+
+
+@registration_router.callback_query(F.data == "Позже")
+async def postpone_registration(callback: CallbackQuery):
+    """
+    Обработчик кнопки "Позже"
+    """
+    await callback.message.edit_text(
+        "Хорошо! Напомню тебе через неделю. \n"
+        "А если передумаешь раньше — просто напиши «‎Участвую» 😉"
+    )
+    # Здесь можно добавить логику для создания отложенного напоминания
+    await callback.answer()
+
+
+@registration_router.message(F.text.lower() == "участвую")
+@registration_router.callback_query(F.data == "Да, хочу!" or F.data == "Да, участвую!")
+async def start_registration(message: Message | CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Начало регистрации пользователя
+    """
+    if isinstance(message, CallbackQuery):
+        message_obj = message.message
+        await message.answer()
     else:
-        # Начинаем регистрацию
-        if not user:
-            # Если пользователя нет в базе, создаем его
-            full_name = message.from_user.full_name
-            username = message.from_user.username
-            user = await create_user(session, message.from_user.id, full_name, username)
-        
-        # Приветственное сообщение
-        await message.answer(
-            f"Привет, {user.full_name}! 👋\n\n"
-            "Добро пожаловать в Random Coffee! Это бот для организации случайных встреч с коллегами. "
-            "Я помогу вам познакомиться с интересными людьми и расширить круг общения.\n\n"
-            "Давайте пройдем небольшую регистрацию, чтобы я мог подбирать вам подходящих собеседников."
+        message_obj = message
+    
+    # Проверяем, есть ли пользователь в базе
+    user = await get_user(session, message_obj.chat.id)
+    if not user:
+        # Создаем нового пользователя
+        user = await create_user(
+            session, 
+            telegram_id=message_obj.chat.id,
+            username=message_obj.chat.username,
+            full_name=message_obj.chat.full_name
         )
-        
-        # Запрашиваем имя
-        await message.answer(
-            "Как вас зовут? (Можно оставить то, что указано в профиле Telegram)",
-            reply_markup=get_skip_keyboard()
-        )
-        
-        # Устанавливаем состояние "ожидание имени"
-        await message.bot.state_storage.set_state(message.from_user.id, RegistrationStates.waiting_for_name)
+    
+    await message_obj.answer(
+        "Отлично! Чтобы подобрать тебе подходящего собеседника, мне нужно немного информации. "
+        "Давай заполним мини-анкету — это займёт не более 2 минут."
+    )
+    
+    # Переходим к вопросу о имени
+    await message_obj.answer(
+        "1/6 🔹 Как тебя зовут? Напиши имя и ник в TG, например: Анна, @name_beeline"
+    )
+    await state.set_state(RegistrationStates.waiting_for_name)
 
 
 @registration_router.message(StateFilter(RegistrationStates.waiting_for_name))
 async def process_name(message: Message, state: FSMContext, session: AsyncSession):
     """
-    Обработчик имени пользователя.
+    Обработка имени пользователя
     """
-    user = await get_user(session, message.from_user.id)
+    # Сохраняем имя
+    await state.update_data(full_name=message.text)
     
-    # Если пользователь не выбрал "Пропустить", обновляем имя
-    if message.text != "⏩ Пропустить":
-        await update_user(session, user, full_name=message.text)
+    # Обновляем имя в базе данных
+    await update_user(session, message.from_user.id, {"full_name": message.text})
     
-    # Запрашиваем отдел/роль
+    # Переходим к вопросу о подразделении и роли
     await message.answer(
-        "Укажите ваш отдел или роль (например, «Разработка», «Маркетинг» и т.д.):",
-        reply_markup=get_skip_keyboard()
+        "2/6 🔹 Твои подразделение и роль, например: менеджер, отдел коммуникаций"
     )
-    
-    # Устанавливаем следующее состояние
     await state.set_state(RegistrationStates.waiting_for_department)
 
 
 @registration_router.message(StateFilter(RegistrationStates.waiting_for_department))
 async def process_department(message: Message, state: FSMContext, session: AsyncSession):
     """
-    Обработчик отдела/роли пользователя.
+    Обработка подразделения и роли
     """
-    user = await get_user(session, message.from_user.id)
+    # Сохраняем информацию о подразделении и роли
+    department_role = message.text.split(",", 1)
     
-    # Если пользователь не выбрал "Пропустить", обновляем отдел
-    if message.text != "⏩ Пропустить":
-        await update_user(session, user, department=message.text)
+    role = department_role[0].strip()
+    department = department_role[1].strip() if len(department_role) > 1 else ""
     
-    # Запрашиваем рабочие часы
+    await state.update_data(department=department, role=role)
+    
+    # Обновляем в базе данных
+    await update_user(
+        session, 
+        message.from_user.id, 
+        {"department": department, "role": role}
+    )
+    
+    # Переходим к вопросу о формате встречи
     await message.answer(
-        "Укажите ваши рабочие часы или время, удобное для общения.\n"
-        "Например, «10:00-18:00» или «После обеда»:",
-        reply_markup=get_skip_keyboard()
+        "3/6 🔹 Формат встречи:",
+        reply_markup=create_meeting_format_keyboard()
     )
-    
-    # Устанавливаем следующее состояние
-    await state.set_state(RegistrationStates.waiting_for_work_hours)
+    await state.set_state(RegistrationStates.waiting_for_format)
 
 
-@registration_router.message(StateFilter(RegistrationStates.waiting_for_work_hours))
-async def process_work_hours(message: Message, state: FSMContext, session: AsyncSession):
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_format))
+async def process_format(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     """
-    Обработчик рабочих часов пользователя.
+    Обработка формата встречи
     """
-    user = await get_user(session, message.from_user.id)
+    # Определяем формат встречи из callback_data
+    format_text = callback.data
+    meeting_format = None
     
-    # Если пользователь не выбрал "Пропустить", обновляем рабочие часы
-    if message.text != "⏩ Пропустить":
-        work_hours = message.text
-        # Если указаны часы в формате HH:MM-HH:MM, разбиваем на начало и конец
-        if "-" in work_hours and len(work_hours.split("-")) == 2:
-            start_time, end_time = work_hours.split("-")
-            start_time = start_time.strip()
-            end_time = end_time.strip()
-            
-            # Если время в правильном формате, сохраняем отдельно начало и конец
-            if ":" in start_time and ":" in end_time:
-                await update_user(session, user, work_hours_start=start_time, work_hours_end=end_time)
-            else:
-                # Иначе сохраняем как строку
-                await update_user(session, user, work_hours_start=work_hours)
-        else:
-            # Если формат не распознан, сохраняем как строку
-            await update_user(session, user, work_hours_start=work_hours)
-    
-    # Запрашиваем формат встречи
-    await message.answer(
-        "Выберите предпочтительный формат встречи:",
-        reply_markup=get_meeting_format_keyboard()
-    )
-    
-    # Устанавливаем следующее состояние
-    await state.set_state(RegistrationStates.waiting_for_meeting_format)
-
-
-@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_meeting_format), F.data.startswith("format:"))
-async def process_meeting_format(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    """
-    Обработчик выбора формата встречи.
-    """
-    # Извлекаем формат из callback data
-    format_value = callback.data.split(":")[1]
-    meeting_format = MeetingFormat(format_value)
-    
-    # Обновляем данные пользователя
-    user = await get_user(session, callback.from_user.id)
-    await update_user(session, user, meeting_format=meeting_format)
-    
-    # Запрашиваем интересующие темы
-    await callback.message.edit_text(
-        "Выберите интересующие вас темы для общения (можно выбрать несколько):",
-        reply_markup=get_topics_keyboard()
-    )
-    
-    # Сохраняем выбранные темы в контексте
-    await state.update_data(selected_topics=[])
-    
-    # Устанавливаем следующее состояние
-    await state.set_state(RegistrationStates.waiting_for_topics)
-
-
-@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_topics), F.data.startswith("topic:"))
-async def process_topic_selection(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    """
-    Обработчик выбора тем для общения.
-    """
-    # Получаем текущие выбранные темы
-    user_data = await state.get_data()
-    selected_topics = user_data.get("selected_topics", [])
-    
-    # Извлекаем тему из callback data
-    topic_value = callback.data.split(":")[1]
-    
-    # Добавляем или удаляем тему из списка
-    if topic_value in selected_topics:
-        selected_topics.remove(topic_value)
+    if format_text == "Онлайн":
+        meeting_format = MeetingFormat.ONLINE
+    elif format_text == "Оффлайн":
+        meeting_format = MeetingFormat.OFFLINE
     else:
-        selected_topics.append(topic_value)
+        meeting_format = MeetingFormat.ANY
     
-    # Обновляем данные в контексте
-    await state.update_data(selected_topics=selected_topics)
+    # Сохраняем формат встречи
+    await state.update_data(meeting_format=meeting_format.value)
     
-    # Обновляем клавиатуру с отметками выбранных тем
-    await callback.message.edit_reply_markup(reply_markup=get_topics_keyboard(selected_topics))
+    # Обновляем в базе данных
+    await update_user(
+        session, 
+        callback.from_user.id, 
+        {"meeting_format": meeting_format}
+    )
+    
+    # Отвечаем на callback и редактируем сообщение
+    await callback.answer()
+    await callback.message.edit_text(f"Выбран формат: {meeting_format.value}")
+    
+    # Переходим к вопросу о городе и офисе
+    await callback.message.answer(
+        "4/6 🔹 Город и офис для встречи, например: «‎Москва, офис на Ленинском»"
+    )
+    await state.set_state(RegistrationStates.waiting_for_location)
 
 
-@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_topics), F.data == "topics_done")
-async def process_topics_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+@registration_router.message(StateFilter(RegistrationStates.waiting_for_location))
+async def process_location(message: Message, state: FSMContext, session: AsyncSession):
     """
-    Обработчик завершения выбора тем.
+    Обработка города и офиса
     """
-    # Получаем выбранные темы
+    location = message.text.split(",", 1)
+    
+    city = location[0].strip()
+    office = location[1].strip() if len(location) > 1 else ""
+    
+    # Сохраняем информацию о локации
+    await state.update_data(city=city, office=office)
+    
+    # Обновляем в базе данных
+    await update_user(
+        session, 
+        message.from_user.id, 
+        {"city": city, "office": office}
+    )
+    
+    # Получаем список интересов из базы данных или создаем по умолчанию
+    interests = await session.execute(select(Interest))
+    interests = interests.scalars().all()
+    
+    if not interests:
+        # Если интересов нет в базе, создаем их
+        for interest_data in DEFAULT_INTERESTS:
+            interest = Interest(name=interest_data["name"], emoji=interest_data["emoji"])
+            session.add(interest)
+        await session.commit()
+        
+        interests = await session.execute(select(Interest))
+        interests = interests.scalars().all()
+    
+    # Переходим к вопросу об интересах
+    await message.answer(
+        "5/6 🔹 Твои интересы (выбери 1-3 варианта):",
+        reply_markup=create_interest_keyboard(interests)
+    )
+    await state.set_state(RegistrationStates.waiting_for_interests)
+
+
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_interests), F.data.startswith("interest_"))
+async def process_interests(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработка интересов пользователя
+    """
+    # Получаем текущие данные из state
     user_data = await state.get_data()
-    selected_topics = user_data.get("selected_topics", [])
+    selected_interests = user_data.get("selected_interests", [])
     
-    # Если не выбрано ни одной темы, просим выбрать хотя бы одну
-    if not selected_topics:
-        await callback.answer("Пожалуйста, выберите хотя бы одну тему", show_alert=True)
-        return
+    # Извлекаем ID интереса из callback_data
+    interest_id = int(callback.data.split("_")[1])
     
-    # Обновляем темы пользователя в базе данных
+    # Проверяем, выбран ли интерес уже или нет
+    if interest_id in selected_interests:
+        selected_interests.remove(interest_id)
+    else:
+        # Ограничиваем количество выбранных интересов до 3
+        if len(selected_interests) < 3:
+            selected_interests.append(interest_id)
+    
+    # Сохраняем обновленный список интересов
+    await state.update_data(selected_interests=selected_interests)
+    
+    # Получаем информацию о выбранных интересах для отображения
+    interests_info = []
+    for interest_id in selected_interests:
+        interest = await session.get(Interest, interest_id)
+        if interest:
+            interests_info.append(f"{interest.emoji} {interest.name}")
+    
+    # Отвечаем на callback и обновляем сообщение
+    await callback.answer()
+    
+    # Получаем все интересы для обновления клавиатуры
+    all_interests = await session.execute(select(Interest))
+    all_interests = all_interests.scalars().all()
+    
+    if selected_interests:
+        selected_text = "Выбранные интересы:\n" + "\n".join(interests_info)
+        if len(selected_interests) >= 1:
+            selected_text += "\n\nНажми «Готово», если закончил выбор"
+    else:
+        selected_text = "Выбери хотя бы один интерес"
+    
+    await callback.message.edit_text(
+        f"5/6 🔹 Твои интересы (выбери 1-3 варианта):\n\n{selected_text}",
+        reply_markup=create_interest_keyboard(all_interests, selected_interests, show_done=(len(selected_interests) >= 1))
+    )
+
+
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_interests), F.data == "interests_done")
+async def process_interests_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработка завершения выбора интересов
+    """
+    # Получаем выбранные интересы
+    user_data = await state.get_data()
+    selected_interests = user_data.get("selected_interests", [])
+    
+    # Получаем пользователя из базы
     user = await get_user(session, callback.from_user.id)
     
-    # Сначала очищаем все темы пользователя
-    user.topics.clear()
+    # Связываем пользователя с интересами
+    user.interests = []
+    for interest_id in selected_interests:
+        interest = await session.get(Interest, interest_id)
+        if interest:
+            user.interests.append(interest)
+    
     await session.commit()
     
-    # Затем добавляем выбранные темы
-    for topic_value in selected_topics:
-        topic = TopicType(topic_value)
-        await add_user_topic(session, user, topic)
+    # Отвечаем на callback и обновляем сообщение
+    await callback.answer()
     
-    # Подготавливаем сводку данных для подтверждения
-    meeting_format_name = {
-        MeetingFormat.OFFLINE: "Оффлайн 🏢",
-        MeetingFormat.ONLINE: "Онлайн 💻",
-        MeetingFormat.ANY: "Любой 🔄"
-    }.get(user.meeting_format, "Не указан")
-    
-    topics_str = "\n".join([
-        f"• {get_topic_emoji(TopicType(topic))} {get_topic_name(TopicType(topic))}"
-        for topic in selected_topics
-    ])
-    
-    work_hours = f"{user.work_hours_start}"
-    if user.work_hours_end:
-        work_hours += f" - {user.work_hours_end}"
-    
-    summary = (
-        f"📋 *Ваши данные для Random Coffee:*\n\n"
-        f"👤 *Имя:* {user.full_name}\n"
-        f"🏢 *Отдел/роль:* {user.department or 'Не указан'}\n"
-        f"🕒 *Рабочие часы:* {work_hours or 'Не указаны'}\n"
-        f"🤝 *Формат встреч:* {meeting_format_name}\n\n"
-        f"📌 *Интересующие темы:*\n{topics_str}\n\n"
-        f"Всё верно?"
-    )
-    
-    # Отправляем сводку с клавиатурой подтверждения
+    # Переходим к выбору времени встречи
     await callback.message.edit_text(
-        summary,
-        reply_markup=get_confirmation_keyboard(),
-        parse_mode="Markdown"
+        "Интересы сохранены!"
     )
     
-    # Устанавливаем состояние подтверждения
-    await state.set_state(RegistrationStates.confirming_data)
-
-
-@registration_router.callback_query(StateFilter(RegistrationStates.confirming_data), F.data == "confirm_registration")
-async def confirm_registration(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    """
-    Обработчик подтверждения регистрации.
-    """
-    # Помечаем регистрацию как завершенную
-    user = await get_user(session, callback.from_user.id)
-    await update_user(session, user, registration_complete=True)
-    
-    # Сбрасываем состояние FSM
-    await state.clear()
-    
-    # Отправляем сообщение об успешной регистрации
-    await callback.message.edit_text(
-        "✅ Отлично! Ваша регистрация успешно завершена.\n\n"
-        "Теперь вы участвуете в Random Coffee. Каждую неделю я буду подбирать вам собеседника "
-        "по вашим интересам и предпочтениям.\n\n"
-        "Когда будет найден подходящий собеседник, я отправлю вам уведомление с информацией о нём."
-    )
-    
-    # Отправляем основное меню
     await callback.message.answer(
-        "Что вы хотите сделать?",
-        reply_markup=get_start_keyboard()
+        "6/6 🔹 Выбери день и время, когда хочешь провести встречу."
+        # Здесь будет добавлен календарь
     )
+    await state.set_state(RegistrationStates.waiting_for_schedule)
 
 
-@registration_router.callback_query(StateFilter(RegistrationStates.confirming_data), F.data == "change_registration")
-async def change_registration(callback: CallbackQuery, state: FSMContext):
+# Заглушка для выбора времени (в реальности здесь будет календарь)
+@registration_router.message(StateFilter(RegistrationStates.waiting_for_schedule))
+async def process_schedule(message: Message, state: FSMContext, session: AsyncSession):
     """
-    Обработчик изменения данных регистрации.
+    Обработка выбора времени для встреч (временная заглушка)
     """
-    # Возвращаемся к первому шагу регистрации
-    await callback.message.edit_text(
-        "Давайте начнем регистрацию заново. Как вас зовут?",
-        reply_markup=get_skip_keyboard()
+    # В реальном боте здесь будет обработка выбора даты из календаря
+    # Сейчас просто сохраняем текстовый ввод
+    
+    day_time = message.text.split(",", 1)
+    day = day_time[0].strip()
+    time = day_time[1].strip() if len(day_time) > 1 else ""
+    
+    # Сохраняем время
+    await state.update_data(available_day=day, available_time=time)
+    
+    # Обновляем в базе данных
+    await update_user(
+        session, 
+        message.from_user.id, 
+        {"available_day": day, "available_time": time}
     )
     
-    # Устанавливаем состояние "ожидание имени"
-    await state.set_state(RegistrationStates.waiting_for_name)
+    # Спрашиваем о фото
+    await message.answer(
+        "Хочешь добавить фото?",
+        reply_markup=create_yes_no_keyboard("Да, загружаю", "Нет, спасибо")
+    )
+    await state.set_state(RegistrationStates.waiting_for_photo)
 
 
-@registration_router.message(F.text == "📝 Регистрация")
-async def btn_registration(message: Message, session: AsyncSession):
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_photo), F.data == "Да, загружаю")
+async def request_photo(callback: CallbackQuery):
     """
-    Обработчик кнопки "Регистрация" из главного меню.
+    Запрашиваем фото у пользователя
     """
-    user = await get_user(session, message.from_user.id)
+    await callback.answer()
+    await callback.message.edit_text("Пожалуйста, отправь свое фото:")
+
+
+@registration_router.photo(StateFilter(RegistrationStates.waiting_for_photo))
+async def process_photo(message: Message, state: FSMContext, session: AsyncSession):
+    """
+    Обработка фото пользователя
+    """
+    # Получаем фото с наилучшим разрешением
+    photo = message.photo[-1]
     
-    if user and user.registration_complete:
-        # Пользователь уже зарегистрирован
-        await message.answer(
-            "Вы уже зарегистрированы в системе Random Coffee.\n\n"
-            "Хотите изменить свои данные?",
-            reply_markup=get_confirmation_keyboard()
-        )
-    else:
-        # Начинаем регистрацию
-        await cmd_start(message, session) 
+    # Сохраняем ID фото
+    await state.update_data(photo_id=photo.file_id)
+    
+    # Обновляем в базе данных
+    await update_user(
+        session, 
+        message.from_user.id, 
+        {"photo_id": photo.file_id}
+    )
+    
+    # Завершаем регистрацию
+    await complete_registration(message, state, session)
+
+
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_photo), F.data == "Нет, спасибо")
+async def skip_photo(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Пропускаем добавление фото
+    """
+    await callback.answer()
+    await callback.message.edit_text("Без проблем! Регистрация завершена без фото.")
+    
+    # Завершаем регистрацию
+    await complete_registration(callback.message, state, session)
+
+
+async def complete_registration(message: Message, state: FSMContext, session: AsyncSession):
+    """
+    Завершение процесса регистрации
+    """
+    # Обновляем статус регистрации в базе данных
+    await update_user(
+        session, 
+        message.chat.id, 
+        {"registration_complete": True}
+    )
+    
+    # Получаем данные пользователя
+    user = await get_user(session, message.chat.id)
+    
+    # Формируем сообщение с данными пользователя
+    interests_text = ", ".join([interest.name for interest in user.interests]) if user.interests else "Не указаны"
+    
+    user_info = (
+        "🎉 Регистрация успешно завершена! 🎉\n\n"
+        f"Имя: {user.full_name}\n"
+        f"Подразделение: {user.department}, {user.role}\n"
+        f"Формат встреч: {user.meeting_format.value if user.meeting_format else 'Не указан'}\n"
+        f"Локация: {user.city}, {user.office}\n"
+        f"Интересы: {interests_text}\n"
+        f"Время: {user.available_day}, {user.available_time}\n\n"
+        "Теперь я буду искать тебе идеального собеседника. Как только найду – сразу сообщу! 🕵️‍♂️"
+    )
+    
+    await message.answer(user_info)
+    
+    # Очищаем состояние FSM
+    await state.clear() 

@@ -1,153 +1,247 @@
+import logging
+from datetime import datetime
+
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from aiogram.filters import StateFilter
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, CallbackQuery
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import User
-from keyboards import get_rating_keyboard, get_feedback_skip_keyboard
-from services.meeting_service import get_meeting, add_feedback
+from database.models import Feedback, Meeting
+from keyboards import create_rating_keyboard, create_feedback_keyboard, create_yes_no_keyboard
 from services.user_service import get_user
+from services.meeting_service import get_meeting, update_meeting
 from states import FeedbackStates
 
 # Создаем роутер для обратной связи
 feedback_router = Router()
+logger = logging.getLogger(__name__)
 
 
-@feedback_router.callback_query(F.data.startswith("feedback:"))
-async def process_feedback_request(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    """
-    Обработчик запроса на оставление фидбека.
-    """
-    # Извлекаем данные из callback_data
-    data_parts = callback.data.split(":")
-    if len(data_parts) != 3:
-        await callback.answer("Произошла ошибка. Пожалуйста, попробуйте позже.", show_alert=True)
-        return
-    
-    meeting_id = int(data_parts[1])
-    partner_id = int(data_parts[2])
-    
-    # Получаем данные о встрече и партнере
-    meeting = await get_meeting(session, meeting_id)
-    partner = await get_user(session, partner_id)
-    
-    if not meeting or not partner:
-        await callback.answer("Информация о встрече не найдена.", show_alert=True)
-        return
-    
-    # Сохраняем данные в контексте
-    await state.update_data(
-        meeting_id=meeting_id,
-        partner_id=partner_id
-    )
-    
-    # Запрашиваем оценку
-    await callback.message.edit_text(
-        f"Как вы оцените вашу встречу с {partner.full_name}?",
-        reply_markup=get_rating_keyboard()
-    )
-    
-    # Устанавливаем состояние ожидания рейтинга
-    await state.set_state(FeedbackStates.waiting_for_rating)
-
-
-@feedback_router.callback_query(StateFilter(FeedbackStates.waiting_for_rating), F.data.startswith("rating:"))
+@feedback_router.callback_query(F.data.startswith("rating_"))
 async def process_rating(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     """
-    Обработчик выбора оценки.
+    Обработчик выбора оценки для встречи.
     """
-    # Извлекаем рейтинг из callback_data
-    rating = int(callback.data.split(":")[1])
+    # Получаем рейтинг из callback_data
+    rating = int(callback.data.split("_")[1])
     
-    # Сохраняем рейтинг в контексте
+    # Сохраняем рейтинг во временное хранилище
     await state.update_data(rating=rating)
     
-    # Запрашиваем комментарий
+    # Отвечаем на callback
+    await callback.answer()
+    
+    # Редактируем сообщение
     await callback.message.edit_text(
-        "Спасибо за оценку! Хотите оставить комментарий о встрече?",
-        reply_markup=get_feedback_skip_keyboard()
+        f"Ты поставил(а) {rating} {'🌟' * rating}\n\n"
+        "Хочешь добавить комментарий? (необязательно)"
     )
     
-    # Устанавливаем состояние ожидания комментария
+    # Переходим к ожиданию комментария
     await state.set_state(FeedbackStates.waiting_for_comment)
-
-
-@feedback_router.callback_query(StateFilter(FeedbackStates.waiting_for_comment), F.data == "skip_comment")
-async def skip_comment(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
-    """
-    Обработчик пропуска комментария.
-    """
-    # Сохраняем пустой комментарий
-    await state.update_data(comment=None)
-    
-    # Переходим к сохранению фидбека
-    await save_feedback(callback, state, session)
 
 
 @feedback_router.message(StateFilter(FeedbackStates.waiting_for_comment))
 async def process_comment(message: Message, state: FSMContext, session: AsyncSession):
     """
-    Обработчик комментария.
+    Обработчик комментария для встречи.
     """
-    # Сохраняем комментарий в контексте
+    # Сохраняем комментарий во временное хранилище
     await state.update_data(comment=message.text)
     
-    # Отправляем сообщение о сохранении
-    await message.answer("Спасибо за комментарий! Сохраняю ваш фидбек...")
-    
-    # Переходим к сохранению фидбека
-    await save_feedback(message, state, session)
+    # Спрашиваем про участие в следующих встречах
+    await message.answer(
+        "Хочешь поучаствовать ещё раз?",
+        reply_markup=create_feedback_keyboard()
+    )
 
 
-async def save_feedback(event, state: FSMContext, session: AsyncSession):
+@feedback_router.callback_query(F.data == "participate_again")
+async def process_participate_again(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
     """
-    Сохраняет фидбек в базе данных.
+    Обработчик желания участвовать снова.
     """
-    # Получаем данные из контекста
-    data = await state.get_data()
-    meeting_id = data.get("meeting_id")
-    partner_id = data.get("partner_id")
-    rating = data.get("rating")
-    comment = data.get("comment")
+    # Получаем данные из state
+    feedback_data = await state.get_data()
     
-    # Получаем ID пользователя в зависимости от типа события
-    if isinstance(event, CallbackQuery):
-        user_id = event.from_user.id
-    else:  # Message
-        user_id = event.from_user.id
+    # Получаем данные о встрече из context (предполагается, что они там уже есть)
+    meeting_id = feedback_data.get("meeting_id")
+    to_user_id = feedback_data.get("to_user_id")
     
-    # Сохраняем фидбек
-    try:
-        await add_feedback(
-            session,
-            meeting_id=meeting_id,
-            from_user_id=user_id,
-            to_user_id=partner_id,
-            rating=rating,
-            comment=comment
-        )
-        
-        # Очищаем состояние
+    if not meeting_id or not to_user_id:
+        await callback.answer("Ошибка при сохранении отзыва. Попробуйте снова позже.", show_alert=True)
         await state.clear()
-        
-        # Отправляем сообщение об успешном сохранении
-        if isinstance(event, CallbackQuery):
-            await event.message.edit_text(
-                "✅ Спасибо за ваш отзыв! Ваш фидбек поможет нам улучшить сервис Random Coffee."
-            )
-        else:  # Message
-            await event.answer(
-                "✅ Спасибо за ваш отзыв! Ваш фидбек поможет нам улучшить сервис Random Coffee."
-            )
-            
-    except Exception as e:
-        # В случае ошибки
-        error_message = "Произошла ошибка при сохранении фидбека. Пожалуйста, попробуйте позже."
-        
-        if isinstance(event, CallbackQuery):
-            await event.message.edit_text(error_message)
-        else:  # Message
-            await event.answer(error_message)
-        
-        print(f"Ошибка при сохранении фидбека: {e}") 
+        return
+    
+    # Создаем новую запись обратной связи
+    feedback = Feedback(
+        meeting_id=meeting_id,
+        from_user_id=callback.from_user.id,
+        to_user_id=to_user_id,
+        rating=feedback_data.get("rating"),
+        comment=feedback_data.get("comment")
+    )
+    
+    # Сохраняем в базу данных
+    session.add(feedback)
+    await session.commit()
+    
+    # Обновляем статус встречи
+    meeting = await get_meeting(session, meeting_id)
+    await update_meeting(session, meeting, is_completed=True)
+    
+    # Отвечаем пользователю
+    await callback.answer()
+    await callback.message.edit_text(
+        "Спасибо за отзыв! Твоя оценка и комментарий сохранены.\n\n"
+        "Я буду подбирать тебе новые встречи каждую неделю. Жди новых уведомлений! 😊"
+    )
+    
+    # Очищаем состояние
+    await state.clear()
+
+
+@feedback_router.callback_query(F.data == "participate_later")
+async def process_participate_later(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработчик желания отложить участие.
+    """
+    # Получаем данные из state
+    feedback_data = await state.get_data()
+    
+    # Получаем данные о встрече из context
+    meeting_id = feedback_data.get("meeting_id")
+    to_user_id = feedback_data.get("to_user_id")
+    
+    if not meeting_id or not to_user_id:
+        await callback.answer("Ошибка при сохранении отзыва. Попробуйте снова позже.", show_alert=True)
+        await state.clear()
+        return
+    
+    # Создаем новую запись обратной связи
+    feedback = Feedback(
+        meeting_id=meeting_id,
+        from_user_id=callback.from_user.id,
+        to_user_id=to_user_id,
+        rating=feedback_data.get("rating"),
+        comment=feedback_data.get("comment")
+    )
+    
+    # Сохраняем в базу данных
+    session.add(feedback)
+    await session.commit()
+    
+    # Обновляем статус встречи
+    meeting = await get_meeting(session, meeting_id)
+    await update_meeting(session, meeting, is_completed=True)
+    
+    # Деактивируем пользователя на время
+    user = await get_user(session, callback.from_user.id)
+    user.is_active = False
+    await session.commit()
+    
+    # Отвечаем пользователю
+    await callback.answer()
+    await callback.message.edit_text(
+        "Спасибо за отзыв! Твоя оценка и комментарий сохранены.\n\n"
+        "Я напомню тебе через неделю. А если передумаешь раньше — просто напиши «‎Участвую» 😉"
+    )
+    
+    # Очищаем состояние
+    await state.clear()
+
+
+@feedback_router.callback_query(F.data == "suggest_improvement")
+async def process_suggest_improvement(callback: CallbackQuery, state: FSMContext):
+    """
+    Обработчик желания предложить улучшения.
+    """
+    await callback.answer()
+    await callback.message.edit_text(
+        "Что можно улучшить в работе бота? Твои предложения помогут сделать бота лучше!"
+    )
+    
+    # Переходим к ожиданию предложений
+    await state.set_state(FeedbackStates.waiting_for_improvement)
+
+
+@feedback_router.message(StateFilter(FeedbackStates.waiting_for_improvement))
+async def process_improvement(message: Message, state: FSMContext, session: AsyncSession):
+    """
+    Обработчик предложений по улучшению.
+    """
+    # Сохраняем предложение во временное хранилище
+    await state.update_data(improvement_suggestion=message.text)
+    
+    # Получаем данные из state
+    feedback_data = await state.get_data()
+    
+    # Получаем данные о встрече из context
+    meeting_id = feedback_data.get("meeting_id")
+    to_user_id = feedback_data.get("to_user_id")
+    
+    if not meeting_id or not to_user_id:
+        await message.answer("Ошибка при сохранении отзыва. Попробуйте снова позже.")
+        await state.clear()
+        return
+    
+    # Создаем новую запись обратной связи
+    feedback = Feedback(
+        meeting_id=meeting_id,
+        from_user_id=message.from_user.id,
+        to_user_id=to_user_id,
+        rating=feedback_data.get("rating"),
+        comment=feedback_data.get("comment"),
+        improvement_suggestion=feedback_data.get("improvement_suggestion")
+    )
+    
+    # Сохраняем в базу данных
+    session.add(feedback)
+    await session.commit()
+    
+    # Обновляем статус встречи
+    meeting = await get_meeting(session, meeting_id)
+    await update_meeting(session, meeting, is_completed=True)
+    
+    # Отвечаем пользователю
+    await message.answer(
+        "Большое спасибо за твои предложения! Мы обязательно их учтем.\n\n"
+        "Хочешь поучаствовать в следующих встречах?",
+        reply_markup=create_yes_no_keyboard("Да!", "Позже")
+    )
+
+
+@feedback_router.callback_query(StateFilter(FeedbackStates.waiting_for_improvement), F.data == "Да!")
+async def confirm_after_improvement(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработчик подтверждения участия после предложения улучшений.
+    """
+    # Отвечаем пользователю
+    await callback.answer()
+    await callback.message.edit_text(
+        "Отлично! Буду подбирать тебе новые встречи каждую неделю. Жди новых уведомлений! 😊"
+    )
+    
+    # Очищаем состояние
+    await state.clear()
+
+
+@feedback_router.callback_query(StateFilter(FeedbackStates.waiting_for_improvement), F.data == "Позже")
+async def postpone_after_improvement(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработчик отложенного участия после предложения улучшений.
+    """
+    # Деактивируем пользователя на время
+    user = await get_user(session, callback.from_user.id)
+    user.is_active = False
+    await session.commit()
+    
+    # Отвечаем пользователю
+    await callback.answer()
+    await callback.message.edit_text(
+        "Хорошо! Я напомню тебе через неделю. А если передумаешь раньше — просто напиши «‎Участвую» 😉"
+    )
+    
+    # Очищаем состояние
+    await state.clear() 

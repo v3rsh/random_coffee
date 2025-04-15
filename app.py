@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.db import init_db, get_session
-from handlers import registration_router, feedback_router, common_router, admin_router
+from handlers import registration_router, feedback_router, common_router, admin_router, pairing_router
 from scheduler import setup_scheduler
 
 # Загружаем переменные окружения из .env файла
@@ -73,6 +73,7 @@ async def main():
     dp.include_router(feedback_router)
     dp.include_router(common_router)
     dp.include_router(admin_router)
+    dp.include_router(pairing_router)
     
     # Запускаем планировщик задач
     scheduler = setup_scheduler()
