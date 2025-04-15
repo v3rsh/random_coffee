@@ -54,6 +54,47 @@ async def update_user(
     return user
 
 
+async def update_user(
+    session: AsyncSession,
+    user_or_id,
+    data=None,
+    **kwargs
+) -> User:
+    """
+    Обновление данных пользователя.
+    
+    Args:
+        session: Сессия базы данных
+        user_or_id: Объект User или telegram_id пользователя
+        data: Словарь с данными для обновления (опционально)
+        **kwargs: Именованные аргументы с данными для обновления
+    
+    Returns:
+        Обновленный объект User
+    """
+    # Получаем пользователя, если передан telegram_id
+    if isinstance(user_or_id, int):
+        user = await get_user(session, user_or_id)
+        if not user:
+            raise ValueError(f"Пользователь с ID {user_or_id} не найден")
+    else:
+        user = user_or_id
+    
+    # Обрабатываем словарь data, если он передан
+    if data:
+        for key, value in data.items():
+            if hasattr(user, key):
+                setattr(user, key, value)
+    
+    # Обрабатываем именованные аргументы
+    for key, value in kwargs.items():
+        if hasattr(user, key):
+            setattr(user, key, value)
+    
+    await session.commit()
+    return user
+
+
 async def add_user_topic(
     session: AsyncSession,
     user: User,

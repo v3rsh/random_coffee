@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import os
 from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from aiogram import Bot
 from sqlalchemy import select, and_, or_
 
-from app import bot
 from database.db import get_session
 from database.models import User, Meeting
 from handlers.notifications import send_meeting_reminder, send_feedback_request, send_reactivation_reminder
@@ -256,48 +257,56 @@ async def send_pairing_notifications(paired_users):
                 logger.error(f"Ошибка при отправке уведомления пользователю {user2.telegram_id}: {e}")
 
 
-def setup_scheduler():
+def setup_scheduler(bot=None):
     """
-    Настраивает и запускает планировщик задач.
+    Настраивает планировщик задач.
     
+    :param bot: Экземпляр бота. Если None, будет создан новый.
     :return: Экземпляр планировщика
     """
+    # Если bot не передан, создаем его
+    if bot is None:
+        from dotenv import load_dotenv
+        load_dotenv()
+        bot = Bot(token=os.getenv("BOT_TOKEN"))
+    
+    # Сохраняем бота в глобальную переменную для использования в задачах
+    globals()["bot"] = bot
+    
     scheduler = AsyncIOScheduler()
     
-    # Еженедельное создание пар (каждый понедельник в 9:00)
+    # Еженедельное создание пар (по понедельникам в 10:00)
     scheduler.add_job(
         weekly_pairing_job,
-        CronTrigger(day_of_week="mon", hour=9, minute=0),
+        trigger=CronTrigger(day_of_week="mon", hour=10, minute=0),
         id="weekly_pairing",
         replace_existing=True
     )
     
-    # Проверка предстоящих встреч каждый час
+    # Проверка предстоящих встреч (каждый час)
     scheduler.add_job(
         check_meetings_job,
-        CronTrigger(minute=0),  # Каждый час в :00 минут
+        trigger=CronTrigger(hour="*", minute=0),
         id="check_meetings",
         replace_existing=True
     )
     
-    # Проверка фидбека каждый день в 10:00
+    # Проверка фидбека (каждый день в 18:00)
     scheduler.add_job(
         check_feedback_job,
-        CronTrigger(hour=10, minute=0),
+        trigger=CronTrigger(hour=18, minute=0),
         id="check_feedback",
         replace_existing=True
     )
     
-    # Отправка напоминаний неактивным пользователям (каждую пятницу в 12:00)
+    # Напоминание неактивным пользователям (каждый понедельник в 12:00)
     scheduler.add_job(
         reactivation_reminder_job,
-        CronTrigger(day_of_week="fri", hour=12, minute=0),
+        trigger=CronTrigger(day_of_week="mon", hour=12, minute=0),
         id="reactivation_reminder",
         replace_existing=True
     )
     
     # Запускаем планировщик
     scheduler.start()
-    logger.info("Планировщик задач запущен")
-    
     return scheduler 

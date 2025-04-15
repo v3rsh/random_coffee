@@ -125,11 +125,25 @@ async def process_name(message: Message, state: FSMContext, session: AsyncSessio
     """
     Обработка имени пользователя
     """
-    # Сохраняем имя
-    await state.update_data(full_name=message.text)
+    # Разделяем имя и username по запятой
+    name_parts = message.text.split(",", 1)
     
-    # Обновляем имя в базе данных
-    await update_user(session, message.from_user.id, {"full_name": message.text})
+    full_name = name_parts[0].strip()
+    username = name_parts[1].strip() if len(name_parts) > 1 else None
+    
+    # Если есть username, убираем @ в начале, если он есть
+    if username and username.startswith("@"):
+        username = username[1:]
+    
+    # Сохраняем данные в state
+    await state.update_data(full_name=full_name, username=username)
+    
+    # Обновляем информацию в базе данных
+    await update_user(
+        session, 
+        message.from_user.id, 
+        data={"full_name": full_name, "username": username}
+    )
     
     # Переходим к вопросу о подразделении и роли
     await message.answer(
@@ -371,7 +385,7 @@ async def request_photo(callback: CallbackQuery):
     await callback.message.edit_text("Пожалуйста, отправь свое фото:")
 
 
-@registration_router.photo(StateFilter(RegistrationStates.waiting_for_photo))
+@registration_router.message(StateFilter(RegistrationStates.waiting_for_photo), F.photo)
 async def process_photo(message: Message, state: FSMContext, session: AsyncSession):
     """
     Обработка фото пользователя

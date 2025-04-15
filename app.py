@@ -44,7 +44,7 @@ class DbSessionMiddleware:
         self.session_pool = session_pool
     
     async def __call__(self, handler, event, data):
-        async with self.session_pool() as session:
+        async for session in self.session_pool():
             data["session"] = session
             return await handler(event, data)
 
@@ -76,7 +76,7 @@ async def main():
     dp.include_router(pairing_router)
     
     # Запускаем планировщик задач
-    scheduler = setup_scheduler()
+    scheduler = setup_scheduler(bot)
     
     # Запускаем поллинг
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())

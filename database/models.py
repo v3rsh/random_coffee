@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from sqlalchemy import (
     BigInteger, Boolean, Column, DateTime, Enum as SQLAlchemyEnum,
-    ForeignKey, Integer, String, Table, Text
+    ForeignKey, Integer, String, Table, Text, Float
 )
 from sqlalchemy.orm import relationship, DeclarativeBase
 
@@ -35,6 +35,15 @@ user_topics = Table(
 )
 
 
+# Таблица для связи пользователей и интересов (many-to-many)
+user_interests = Table(
+    'user_interests',
+    Base.metadata,
+    Column('user_id', BigInteger, ForeignKey('users.telegram_id'), primary_key=True),
+    Column('interest_id', Integer, ForeignKey('interests.id'), primary_key=True)
+)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -55,7 +64,7 @@ class User(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Связи
-    topics = relationship("TopicType", secondary=user_topics, backref="users")
+    topics = []  # TopicType это перечисление, а не класс модели
     meetings_as_user1 = relationship(
         "Meeting", foreign_keys="Meeting.user1_id", back_populates="user1"
     )
@@ -68,6 +77,7 @@ class User(Base):
     feedbacks_received = relationship(
         "Feedback", foreign_keys="Feedback.to_user_id", back_populates="to_user"
     )
+    interests = relationship("Interest", secondary=user_interests, back_populates="users")
 
     @property
     def all_meetings(self):
@@ -119,4 +129,15 @@ class Feedback(Base):
     to_user = relationship("User", foreign_keys=[to_user_id], back_populates="feedbacks_received")
 
     def __repr__(self):
-        return f"<Feedback(id={self.id}, meeting_id={self.meeting_id}, from_user_id={self.from_user_id}, rating={self.rating})>" 
+        return f"<Feedback(id={self.id}, meeting_id={self.meeting_id}, from_user_id={self.from_user_id}, rating={self.rating})>"
+
+
+class Interest(Base):
+    __tablename__ = "interests"
+    
+    id = Column(Integer, primary_key=True)
+    name = Column(String, nullable=False)
+    emoji = Column(String, nullable=True)
+    
+    # Связь с пользователями (many-to-many)
+    users = relationship("User", secondary=user_interests, back_populates="interests") 
