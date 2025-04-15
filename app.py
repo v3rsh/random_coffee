@@ -5,12 +5,11 @@ import sys
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher
-from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.strategy import FSMStrategy
 from dotenv import load_dotenv
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.db import init_db, get_session
+from database import init_db, get_session, SQLiteStorage
 from handlers import registration_router, feedback_router, common_router, admin_router, pairing_router
 from scheduler import setup_scheduler
 
@@ -59,8 +58,8 @@ async def main():
     await init_db()
     logger.info("Database initialized")
     
-    # Создаем хранилище состояний (in-memory)
-    storage = MemoryStorage()
+    # Создаем хранилище состояний (SQLite)
+    storage = SQLiteStorage()
     
     # Создаем диспетчер
     dp = Dispatcher(storage=storage, fsm_strategy=FSMStrategy.USER_IN_CHAT)
