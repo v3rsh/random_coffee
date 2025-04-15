@@ -7,6 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from database.models import User, Interest, MeetingFormat
 from database.interests_data import DEFAULT_INTERESTS
@@ -444,8 +445,15 @@ async def complete_registration(message: Message, state: FSMContext, session: As
         {"registration_complete": True}
     )
     
-    # Получаем данные пользователя
-    user = await get_user(session, message.chat.id)
+    # Получаем данные пользователя с явной загрузкой interests
+    # Используем selectinload для предотвращения lazy loading
+    query = select(User).where(User.telegram_id == message.chat.id).options(selectinload(User.interests))
+    result = await session.execute(query)
+    user = result.scalar_one_or_none()
+    
+    if not user:
+        await message.answer("Произошла ошибка при завершении регистрации. Пожалуйста, попробуйте ещё раз.")
+        return
     
     # Формируем сообщение с данными пользователя
     interests_text = ", ".join([interest.name for interest in user.interests]) if user.interests else "Не указаны"

@@ -169,9 +169,10 @@ async def get_matching_users(
     # Исключаем самого пользователя из списка
     excluded_user_ids.append(user.telegram_id)
     
-    # Базовый запрос
+    # Базовый запрос с предварительной загрузкой interests
     query = (
         select(User)
+        .options(selectinload(User.interests))
         .where(User.is_active == True)
         .where(User.registration_complete == True)
         .where(User.telegram_id.not_in(excluded_user_ids))

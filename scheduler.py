@@ -145,6 +145,12 @@ async def create_pairs(session, users):
     """
     import random
     from collections import defaultdict
+    from sqlalchemy.orm import selectinload
+    
+    # Предварительно загружаем интересы всех пользователей для избежания lazy loading
+    for user in users:
+        # Явно загружаем interests для каждого пользователя
+        await session.refresh(user, ["interests"])
     
     # Словарь для хранения последних партнеров каждого пользователя
     recent_partners = defaultdict(set)
@@ -194,7 +200,7 @@ async def create_pairs(session, users):
                 potential_partner.meeting_format.value != "Не важно"):
                 continue
             
-            # Находим общие интересы
+            # Находим общие интересы (теперь interests уже загружены)
             common_interests = set(interest.id for interest in user.interests) & set(interest.id for interest in potential_partner.interests)
             
             # Добавляем пользователя с весом по количеству общих интересов
