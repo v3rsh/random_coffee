@@ -65,9 +65,10 @@ async def cmd_find(message: Message, state: FSMContext, session: AsyncSession):
         
         user_info = (
             f"*{i}. {match.full_name}*, {match.role}\n"
+            f"   Номер: №{match.user_number}\n"
             f"   Отдел: {match.department}\n"
             f"   Интересы: {interests_text}\n"
-            f"   Доступен: {match.available_day}, {match.available_time}"
+            f"   Доступен: {format_weekdays(match.available_days)}, {match.available_time_slot}"
         )
         
         await message.answer(user_info, parse_mode="Markdown")
@@ -115,11 +116,13 @@ async def select_user(callback: CallbackQuery, state: FSMContext, session: Async
     meeting_info = (
         f"✅ Отлично! Ты выбрал(а) встречу с *{selected_user.full_name}*\n\n"
         f"*О собеседнике:*\n"
+        f"№{selected_user.user_number}\n"
         f"📋 Подразделение: {selected_user.department}\n"
         f"👨‍💼 Роль: {selected_user.role}\n"
         f"🤝 Формат: {selected_user.meeting_format.value if selected_user.meeting_format else 'Не указан'}\n"
         f"📍 Место встречи: {selected_user.city}, {selected_user.office}\n"
-        f"🕒 Доступное время: {selected_user.available_day}, {selected_user.available_time}\n\n"
+        f"🕒 Доступные дни: {format_weekdays(selected_user.available_days)}\n"
+        f"⏰ Удобное время: {selected_user.available_time_slot}\n\n"
         f"*Общие интересы:*\n{interests_text}\n\n"
         f"Напиши собеседнику напрямую, чтобы договориться о встрече: @{selected_user.username}"
     )
@@ -130,11 +133,13 @@ async def select_user(callback: CallbackQuery, state: FSMContext, session: Async
     partner_message = (
         f"🎉 Хорошие новости! *{user.full_name}* выбрал(а) тебя для встречи!\n\n"
         f"*О собеседнике:*\n"
+        f"№{user.user_number}\n"
         f"📋 Подразделение: {user.department}\n"
         f"👨‍💼 Роль: {user.role}\n"
         f"🤝 Формат: {user.meeting_format.value if user.meeting_format else 'Не указан'}\n"
         f"📍 Место встречи: {user.city}, {user.office}\n"
-        f"🕒 Доступное время: {user.available_day}, {user.available_time}\n\n"
+        f"🕒 Доступные дни: {format_weekdays(user.available_days)}\n"
+        f"⏰ Удобное время: {user.available_time_slot}\n\n"
         f"*Общие интересы:*\n{interests_text}\n\n"
         f"Собеседник напишет тебе напрямую для согласования деталей встречи.\n"
         f"Также ты можешь сам(а) написать ему: @{user.username}"
@@ -199,9 +204,10 @@ async def show_more_users(callback: CallbackQuery, state: FSMContext, session: A
         
         user_info = (
             f"*{i}. {match.full_name}*, {match.role}\n"
+            f"   Номер: №{match.user_number}\n"
             f"   Отдел: {match.department}\n"
             f"   Интересы: {interests_text}\n"
-            f"   Доступен: {match.available_day}, {match.available_time}"
+            f"   Доступен: {format_weekdays(match.available_days)}, {match.available_time_slot}"
         )
         
         await callback.bot.send_message(
@@ -306,4 +312,27 @@ async def get_common_interests(session: AsyncSession, user1: User, user2: User):
         if interest:
             common_interests.append(interest)
     
-    return common_interests 
+    return common_interests
+
+
+# Добавим функцию форматирования дней недели
+def format_weekdays(days_str):
+    """
+    Форматирует строку с днями недели в удобочитаемый формат
+    
+    :param days_str: Строка с днями недели, разделенными запятыми
+    :return: Отформатированная строка
+    """
+    if not days_str:
+        return "Не указаны"
+    
+    days_list = days_str.split(",")
+    days_names = {
+        "monday": "Пн",
+        "tuesday": "Вт",
+        "wednesday": "Ср",
+        "thursday": "Чт",
+        "friday": "Пт"
+    }
+    
+    return ", ".join([days_names.get(day, day) for day in days_list]) 

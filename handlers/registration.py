@@ -14,7 +14,11 @@ from database.interests_data import DEFAULT_INTERESTS
 from keyboards import (
     create_meeting_format_keyboard,
     create_interest_keyboard,
-    create_yes_no_keyboard
+    create_yes_no_keyboard,
+    get_confirmation_keyboard,
+    get_meeting_format_keyboard,
+    create_weekday_keyboard,
+    create_timeslot_keyboard
 )
 from services.user_service import get_user, create_user, update_user
 from states import RegistrationStates
@@ -315,89 +319,135 @@ async def process_interests_done(callback: CallbackQuery, state: FSMContext, ses
     """
     Обработка завершения выбора интересов
     """
-    # Получаем выбранные интересы
+    await callback.answer()
+    
     user_data = await state.get_data()
     selected_interests = user_data.get("selected_interests", [])
     
-    # Получаем пользователя из базы
-    user = await get_user(session, callback.from_user.id)
-    
-    # Загружаем все выбранные интересы
     interests = []
     for interest_id in selected_interests:
-        # Используем execute вместо прямого обращения к свойству
         result = await session.execute(select(Interest).where(Interest.id == interest_id))
         interest = result.scalar_one_or_none()
         if interest:
             interests.append(interest)
-
-    # Сначала загружаем существующие интересы для избежания lazy loading
+    
+    # Обновляем интересы пользователя
     await session.refresh(user, ["interests"])
     
-    # Очищаем и добавляем новые интересы
+    # Очищаем старые интересы
     user.interests = []
-    await session.flush()
+    await session.commit()
     
     # Добавляем новые интересы
     for interest in interests:
         user.interests.append(interest)
-    
-    # Сохраняем изменения
     await session.commit()
     
-    # Отвечаем на callback и обновляем сообщение
-    await callback.answer()
-    
-    # Переходим к выбору времени встречи
+    # Переходим к выбору дней недели
     await callback.message.edit_text(
         "Интересы сохранены!"
     )
     
     await callback.message.answer(
-        "6/6 🔹 Выбери день и время, когда хочешь провести встречу."
-        # Здесь будет добавлен календарь
+        "6/7 🔹 Выбери дни недели, в которые ты готов(а) встречаться.",
+        reply_markup=create_weekday_keyboard()
     )
-    await state.set_state(RegistrationStates.waiting_for_schedule)
+    await state.set_state(RegistrationStates.waiting_for_days)
 
 
-# Заглушка для выбора времени (в реальности здесь будет календарь)
-@registration_router.message(StateFilter(RegistrationStates.waiting_for_schedule))
-async def process_schedule(message: Message, state: FSMContext, session: AsyncSession):
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_days), F.data.startswith("day_"))
+async def process_days(callback: CallbackQuery, state: FSMContext):
     """
-    Обработка выбора времени для встреч (временная заглушка)
+    Обработка выбора дней недели
     """
-    # В реальном боте здесь будет обработка выбора даты из календаря
-    # Сейчас просто сохраняем текстовый ввод
+    await callback.answer()
     
-    day_time = message.text.split(",", 1)
-    day = day_time[0].strip()
-    time = day_time[1].strip() if len(day_time) > 1 else ""
+    # Получаем выбранный день
+    selected_day = callback.data.split("_")[1]
     
-    # Сохраняем время
-    await state.update_data(available_day=day, available_time=time)
+    # Получаем текущий список выбранных дней
+    user_data = await state.get_data()
+    selected_days = user_data.get("selected_days", [])
     
-    # Обновляем в базе данных
+    # Добавляем или удаляем день из списка
+    if selected_day in selected_days:
+        selected_days.remove(selected_day)
+    else:
+        selected_days.append(selected_day)
+    
+    # Обновляем данные состояния
+    await state.update_data(selected_days=selected_days)
+    
+    # Обновляем клавиатуру
+    await callback.message.edit_reply_markup(
+        reply_markup=create_weekday_keyboard(selected_days)
+    )
+
+
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_days), F.data == "days_done")
+async def process_days_done(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработка завершения выбора дней недели
+    """
+    await callback.answer()
+    
+    # Получаем выбранные дни
+    user_data = await state.get_data()
+    selected_days = user_data.get("selected_days", [])
+    
+    # Преобразуем список дней в строку, разделенную запятыми
+    days_str = ",".join(selected_days)
+    
+    # Сохраняем в БД
     await update_user(
         session, 
-        message.from_user.id, 
-        {"available_day": day, "available_time": time}
+        callback.from_user.id, 
+        {"available_days": days_str}
+    )
+    
+    # Переходим к выбору временного слота
+    await callback.message.edit_text(
+        "Дни сохранены! Теперь выбери удобный временной слот для встреч."
+    )
+    
+    await callback.message.answer(
+        "7/7 🔹 В какое время тебе удобно встречаться?",
+        reply_markup=create_timeslot_keyboard()
+    )
+    await state.set_state(RegistrationStates.waiting_for_time_slot)
+
+
+@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_time_slot), F.data.startswith("slot_"))
+async def process_time_slot(callback: CallbackQuery, state: FSMContext, session: AsyncSession):
+    """
+    Обработка выбора временного слота
+    """
+    await callback.answer()
+    
+    # Получаем выбранный слот
+    selected_slot = callback.data.split("_")[1]
+    
+    # Сохраняем данные
+    await state.update_data(available_time_slot=selected_slot)
+    
+    # Обновляем в БД
+    await update_user(
+        session, 
+        callback.from_user.id, 
+        {"available_time_slot": selected_slot}
+    )
+    
+    # Переходим к добавлению фото
+    await callback.message.edit_text(
+        f"Отлично! Временной слот {selected_slot} сохранен."
     )
     
     # Спрашиваем о фото
-    await message.answer(
+    await callback.message.answer(
         "Хочешь добавить фото?",
         reply_markup=create_yes_no_keyboard("Да, загружаю", "Нет, спасибо")
     )
     await state.set_state(RegistrationStates.waiting_for_photo)
-
-
-@registration_router.callback_query(StateFilter(RegistrationStates.waiting_for_photo), F.data == "Да, загружаю")
-async def request_photo(callback: CallbackQuery):
-    """
-    Запрашиваем фото у пользователя
-    """
-    await callback.answer()
-    await callback.message.edit_text("Пожалуйста, отправь свое фото:")
 
 
 @registration_router.message(StateFilter(RegistrationStates.waiting_for_photo), F.photo)
@@ -458,14 +508,27 @@ async def complete_registration(message: Message, state: FSMContext, session: As
     # Формируем сообщение с данными пользователя
     interests_text = ", ".join([interest.name for interest in user.interests]) if user.interests else "Не указаны"
     
+    # Преобразуем строки дней в читаемый формат
+    days_list = user.available_days.split(",") if user.available_days else []
+    days_names = {
+        "monday": "Понедельник",
+        "tuesday": "Вторник",
+        "wednesday": "Среда",
+        "thursday": "Четверг",
+        "friday": "Пятница"
+    }
+    days_text = ", ".join([days_names.get(day, day) for day in days_list]) if days_list else "Не указаны"
+    
     user_info = (
         "🎉 Регистрация успешно завершена! 🎉\n\n"
+        f"№{user.user_number}\n"
         f"Имя: {user.full_name}\n"
         f"Подразделение: {user.department}, {user.role}\n"
         f"Формат встреч: {user.meeting_format.value if user.meeting_format else 'Не указан'}\n"
         f"Локация: {user.city}, {user.office}\n"
         f"Интересы: {interests_text}\n"
-        f"Время: {user.available_day}, {user.available_time}\n\n"
+        f"Дни для встреч: {days_text}\n"
+        f"Время: {user.available_time_slot}\n\n"
         "Теперь я буду искать тебе идеального собеседника. Как только найду – сразу сообщу! 🕵️‍♂️"
     )
     

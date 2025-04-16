@@ -10,7 +10,8 @@ class RegistrationStates(StatesGroup):
     waiting_for_format = State()     # Ожидание формата встречи
     waiting_for_location = State()   # Ожидание города и офиса
     waiting_for_interests = State()  # Ожидание интересов
-    waiting_for_schedule = State()   # Ожидание графика встреч
+    waiting_for_days = State()       # Ожидание выбора дней недели
+    waiting_for_time_slot = State()  # Ожидание выбора временного слота
     waiting_for_photo = State()      # Ожидание фото (опционально)
 
 

@@ -12,6 +12,8 @@ from database.db import get_session
 from database.models import User, Meeting
 from handlers.notifications import send_meeting_reminder, send_feedback_request, send_reactivation_reminder
 from services.meeting_service import create_meeting, get_pending_feedback_meetings
+from collections import defaultdict
+import random
 
 logger = logging.getLogger(__name__)
 
@@ -143,10 +145,6 @@ async def create_pairs(session, users):
     :param users: Список активных пользователей
     :return: Список пар (кортежей пользователей)
     """
-    import random
-    from collections import defaultdict
-    from sqlalchemy.orm import selectinload
-    
     # Предварительно загружаем интересы всех пользователей для избежания lazy loading
     for user in users:
         # Явно загружаем interests для каждого пользователя
@@ -245,8 +243,11 @@ async def send_pairing_notifications(paired_users):
             message1 = (
                 f"🎉 Хорошие новости! Мы нашли тебе собеседника для неслучайной встречи!\n\n"
                 f"*Твой собеседник: {user2.full_name}*\n"
+                f"№{user2.user_number}\n"
                 f"Подразделение: {user2.department}, {user2.role}\n"
-                f"Формат встреч: {user2.meeting_format.value if user2.meeting_format else 'Не указан'}\n\n"
+                f"Формат встреч: {user2.meeting_format.value if user2.meeting_format else 'Не указан'}\n"
+                f"Доступные дни: {format_weekdays(user2.available_days)}\n"
+                f"Удобное время: {user2.available_time_slot}\n\n"
                 f"Напиши собеседнику напрямую, чтобы договориться о встрече: @{user2.username}"
             )
             
@@ -254,8 +255,11 @@ async def send_pairing_notifications(paired_users):
             message2 = (
                 f"🎉 Хорошие новости! Мы нашли тебе собеседника для неслучайной встречи!\n\n"
                 f"*Твой собеседник: {user1.full_name}*\n"
+                f"№{user1.user_number}\n"
                 f"Подразделение: {user1.department}, {user1.role}\n"
-                f"Формат встреч: {user1.meeting_format.value if user1.meeting_format else 'Не указан'}\n\n"
+                f"Формат встреч: {user1.meeting_format.value if user1.meeting_format else 'Не указан'}\n"
+                f"Доступные дни: {format_weekdays(user1.available_days)}\n"
+                f"Удобное время: {user1.available_time_slot}\n\n"
                 f"Напиши собеседнику напрямую, чтобы договориться о встрече: @{user1.username}"
             )
             
@@ -269,6 +273,25 @@ async def send_pairing_notifications(paired_users):
                 await bot.send_message(user2.telegram_id, message2, parse_mode="Markdown")
             except Exception as e:
                 logger.error(f"Ошибка при отправке уведомления пользователю {user2.telegram_id}: {e}")
+
+
+def format_weekdays(days_str):
+    """
+    Форматирует строку с днями недели в удобочитаемый формат
+    """
+    if not days_str:
+        return "Не указаны"
+    
+    days_list = days_str.split(",")
+    days_names = {
+        "monday": "Пн",
+        "tuesday": "Вт",
+        "wednesday": "Ср",
+        "thursday": "Чт",
+        "friday": "Пт"
+    }
+    
+    return ", ".join([days_names.get(day, day) for day in days_list])
 
 
 def setup_scheduler(bot=None):

@@ -1,7 +1,7 @@
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 
-from database.models import MeetingFormat, TopicType
+from database.models import MeetingFormat, TopicType, WeekDay, TimeSlot
 
 
 def get_start_keyboard() -> ReplyKeyboardMarkup:
@@ -157,7 +157,7 @@ def create_interest_keyboard(interests, selected_interests=None, show_done=False
     if selected_interests is None:
         selected_interests = []
     
-    buttons = []
+    builder = InlineKeyboardBuilder()
     
     # Создаем кнопки для каждого интереса
     for interest in interests:
@@ -168,14 +168,18 @@ def create_interest_keyboard(interests, selected_interests=None, show_done=False
             text=f"{prefix}{interest.emoji} {interest.name}",
             callback_data=f"interest_{interest.id}"
         )
-        buttons.append([button])
+        builder.add(button)
+    
+    # Располагаем кнопки в две колонки
+    builder.adjust(2)
     
     # Добавляем кнопку "Готово", если нужно
     if show_done:
         done_button = InlineKeyboardButton(text="✅ Готово", callback_data="interests_done")
-        buttons.append([done_button])
+        # Добавляем кнопку как отдельную строку (на всю ширину)
+        builder.row(done_button)
     
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+    return builder.as_markup()
 
 
 def create_pairing_keyboard(users) -> InlineKeyboardMarkup:
@@ -229,4 +233,79 @@ def create_feedback_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="Предложить улучшения", callback_data="suggest_improvement"),
         ]
     ])
-    return keyboard 
+    return keyboard
+
+
+def create_weekday_keyboard(selected_days=None) -> InlineKeyboardMarkup:
+    """
+    Создает инлайн-клавиатуру для выбора дней недели.
+    
+    :param selected_days: Список уже выбранных дней (значения WeekDay)
+    :return: Инлайн-клавиатура
+    """
+    if selected_days is None:
+        selected_days = []
+    
+    builder = InlineKeyboardBuilder()
+    
+    # Словарь с русскими названиями дней недели и эмодзи
+    weekday_names = {
+        WeekDay.MONDAY: "🗓️ Понедельник",
+        WeekDay.TUESDAY: "🗓️ Вторник",
+        WeekDay.WEDNESDAY: "🗓️ Среда",
+        WeekDay.THURSDAY: "🗓️ Четверг",
+        WeekDay.FRIDAY: "🗓️ Пятница"
+    }
+    
+    # Создаем кнопки для каждого дня недели
+    for day in WeekDay:
+        # Добавляем галочку для выбранных дней
+        prefix = "✅ " if day.value in selected_days else ""
+        
+        button = InlineKeyboardButton(
+            text=f"{prefix}{weekday_names[day]}",
+            callback_data=f"day_{day.value}"
+        )
+        builder.add(button)
+    
+    # Располагаем кнопки в один столбец
+    builder.adjust(1)
+    
+    # Добавляем кнопку "Готово", если выбран хотя бы один день
+    if selected_days:
+        done_button = InlineKeyboardButton(text="✅ Готово", callback_data="days_done")
+        # Добавляем кнопку как отдельную строку (на всю ширину)
+        builder.row(done_button)
+    
+    return builder.as_markup()
+
+
+def create_timeslot_keyboard() -> InlineKeyboardMarkup:
+    """
+    Создает инлайн-клавиатуру для выбора временного слота.
+    
+    :return: Инлайн-клавиатура
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Словарь с русскими названиями временных слотов и эмодзи
+    timeslot_names = {
+        TimeSlot.SLOT_8_10: "🕘 8:00 - 10:00",
+        TimeSlot.SLOT_10_12: "🕙 10:00 - 12:00",
+        TimeSlot.SLOT_12_14: "🕛 12:00 - 14:00",
+        TimeSlot.SLOT_14_16: "🕝 14:00 - 16:00",
+        TimeSlot.SLOT_16_18: "🕡 16:00 - 18:00"
+    }
+    
+    # Создаем кнопки для каждого временного слота
+    for slot in TimeSlot:
+        button = InlineKeyboardButton(
+            text=timeslot_names[slot],
+            callback_data=f"slot_{slot.value}"
+        )
+        builder.add(button)
+    
+    # Располагаем кнопки в один столбец
+    builder.adjust(1)
+    
+    return builder.as_markup() 

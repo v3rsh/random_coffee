@@ -26,6 +26,22 @@ class TopicType(str, Enum):
     GENERAL_CHAT = "general_chat"
 
 
+class WeekDay(str, Enum):
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+
+
+class TimeSlot(str, Enum):
+    SLOT_8_10 = "8:00-10:00"
+    SLOT_10_12 = "10:00-12:00"
+    SLOT_12_14 = "12:00-14:00"
+    SLOT_14_16 = "14:00-16:00"
+    SLOT_16_18 = "16:00-18:00"
+
+
 # Ассоциативная таблица для связи пользователей и интересов
 user_topics = Table(
     "user_topics",
@@ -55,11 +71,12 @@ class User(Base):
     meeting_format = Column(SQLAlchemyEnum(MeetingFormat), nullable=True)
     city = Column(String(255), nullable=True)
     office = Column(String(255), nullable=True)
-    available_day = Column(String(255), nullable=True)
-    available_time = Column(String(255), nullable=True)
+    available_days = Column(String(255), nullable=True)  # Хранит список дней в виде строки (разделенной запятыми)
+    available_time_slot = Column(String(255), nullable=True)  # Хранит выбранный временной слот
     photo_id = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     registration_complete = Column(Boolean, default=False)
+    user_number = Column(Integer, nullable=True)  # Порядковый номер пользователя
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

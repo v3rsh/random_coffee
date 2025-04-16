@@ -26,10 +26,20 @@ async def create_user(
     """
     Создание нового пользователя.
     """
+    # Определяем максимальный номер пользователя
+    result = await session.execute(
+        select(func.max(User.user_number))
+    )
+    max_number = result.scalar_one_or_none()
+    
+    # Присваиваем порядковый номер (максимальный + 1 или 1, если пользователей нет)
+    next_number = (max_number or 0) + 1
+    
     user = User(
         telegram_id=telegram_id,
         full_name=full_name,
         username=username,
+        user_number=next_number,
         is_active=True,
         registration_complete=False
     )
