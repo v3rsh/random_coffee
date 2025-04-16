@@ -8,7 +8,7 @@ from database.models import Base
 
 # Получаем URL базы данных из переменных окружения
 # По умолчанию используем SQLite
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///database.sqlite3")
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./database.sqlite3")
 
 # Создаем асинхронный движок SQLAlchemy
 engine = create_async_engine(

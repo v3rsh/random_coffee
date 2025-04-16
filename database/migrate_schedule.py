@@ -18,8 +18,8 @@ from database.models import Base, User, TimeSlot, WeekDay
 logger = logging.getLogger(__name__)
 
 # Настройка подключения к базе данных
-SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./database.db")
-ASYNC_SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./database.db")
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./database.sqlite3")
+ASYNC_SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./database.sqlite3")
 
 # Создаем синхронный и асинхронный движки
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
@@ -70,58 +70,37 @@ async def migrate_schedule_data():
     logger.info("Начало миграции данных расписания...")
     
     async with AsyncSessionLocal() as session:
-        # Получаем всех пользователей, отсортированных по дате создания
-        result = await session.execute(
-            select(User).order_by(User.created_at)
-        )
-        users = result.scalars().all()
-        
-        # Назначаем порядковые номера пользователям
-        for i, user in enumerate(users, 1):
-            try:
-                # Назначаем порядковый номер
-                user.user_number = i
-                logger.info(f"Пользователю {user.telegram_id} назначен номер {i}")
-                
-                # Проверяем, есть ли данные в старых полях
-                if hasattr(user, 'available_day') and user.available_day:
-                    day_value = user.available_day.strip()
-                    # Преобразуем значение дня
-                    days_list = []
-                    if day_value in day_mapping:
-                        days_list.append(day_mapping[day_value])
-                    else:
-                        # Если не найдено точное соответствие, пробуем несколько дней разделенных запятой
-                        for day in day_value.split(','):
-                            day = day.strip()
-                            if day in day_mapping:
-                                days_list.append(day_mapping[day])
-                    
-                    # Сохраняем в новое поле
-                    if days_list:
-                        user.available_days = ",".join(days_list)
-                
-                # Проверяем, есть ли данные в старом поле времени
-                if hasattr(user, 'available_time') and user.available_time:
-                    time_value = user.available_time.strip()
-                    
-                    # Пробуем найти соответствие в маппинге
-                    if time_value in time_mapping:
-                        user.available_time_slot = time_mapping[time_value]
-                    else:
-                        # Пробуем найти ближайшее соответствие
-                        for key, value in time_mapping.items():
-                            if key in time_value:
-                                user.available_time_slot = value
-                                break
-                
-                # Сохраняем изменения
-                await session.commit()
-                logger.info(f"Успешно обновлены данные для пользователя {user.telegram_id}")
+        try:
+            # Получаем всех пользователей, отсортированных по дате создания
+            result = await session.execute(
+                select(User).order_by(User.created_at)
+            )
+            users = result.scalars().all()
             
-            except Exception as e:
-                logger.error(f"Ошибка при обновлении данных пользователя {user.telegram_id}: {e}")
-                await session.rollback()
+            # Если пользователей нет, выходим
+            if not users:
+                logger.info("Нет пользователей для миграции")
+                return
+                
+            # Назначаем порядковые номера пользователям
+            for i, user in enumerate(users, 1):
+                try:
+                    # Назначаем порядковый номер
+                    user.user_number = i
+                    logger.info(f"Пользователю {user.telegram_id} назначен номер {i}")
+                    
+                    # Миграция данных дней и времени будет происходить в alter_table.py
+                    
+                    # Сохраняем изменения
+                    await session.commit()
+                    logger.info(f"Успешно обновлены данные для пользователя {user.telegram_id}")
+                
+                except Exception as e:
+                    logger.error(f"Ошибка при обновлении данных пользователя {user.telegram_id}: {e}")
+                    await session.rollback()
+        
+        except Exception as e:
+            logger.error(f"Ошибка при получении пользователей: {e}")
     
     logger.info("Миграция данных расписания завершена")
 
