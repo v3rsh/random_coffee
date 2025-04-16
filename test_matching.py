@@ -3,9 +3,10 @@ import logging
 from datetime import datetime
 
 from dotenv import load_dotenv
+from sqlalchemy import delete, or_
 
 from database.db import async_session_maker, init_db
-from database.models import User, TopicType, MeetingFormat
+from database.models import User, TopicType, MeetingFormat, Meeting
 from services.user_service import create_user, update_user, add_user_topic
 from services.meeting_service import create_meetings_for_users
 
@@ -16,6 +17,31 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def delete_test_data():
+    """
+    Удаляет тестовые данные из базы данных (пользователей и связанные встречи).
+    """
+    test_ids = [100001, 100002, 100003, 100004, 100005]
+    
+    async with async_session_maker() as session:
+        # Сначала удаляем встречи, связанные с тестовыми пользователями
+        meetings_query = delete(Meeting).where(
+            or_(
+                Meeting.user1_id.in_(test_ids),
+                Meeting.user2_id.in_(test_ids)
+            )
+        )
+        meetings_result = await session.execute(meetings_query)
+        await session.commit()
+        logger.info(f"Удалено {meetings_result.rowcount} тестовых встреч")
+        
+        # Затем удаляем самих тестовых пользователей
+        users_query = delete(User).where(User.telegram_id.in_(test_ids))
+        users_result = await session.execute(users_query)
+        await session.commit()
+        logger.info(f"Удалено {users_result.rowcount} тестовых пользователей")
 
 
 async def create_test_users():
@@ -102,6 +128,9 @@ async def test_matching():
     # Инициализируем базу данных
     await init_db()
     
+    # Удаляем существующие тестовые данные
+    await delete_test_data()
+    
     # Создаем тестовых пользователей
     await create_test_users()
     
@@ -117,9 +146,16 @@ async def test_matching():
             user1 = await session.get(User, meeting.user1_id)
             user2 = await session.get(User, meeting.user2_id)
             
-            # Общие интересы
-            user1_topics = set(topic.value for topic in user1.topics)
-            user2_topics = set(topic.value for topic in user2.topics)
+            # Проверяем наличие атрибута topics
+            if not hasattr(user1, 'topics') or not hasattr(user2, 'topics'):
+                logger.warning(f"У одного из пользователей отсутствует атрибут topics")
+                user1_topics = set()
+                user2_topics = set()
+            else:
+                # Общие интересы
+                user1_topics = set(topic.value for topic in user1.topics)
+                user2_topics = set(topic.value for topic in user2.topics)
+            
             common_topics = user1_topics.intersection(user2_topics)
             
             common_topics_str = ", ".join([
@@ -128,7 +164,12 @@ async def test_matching():
             
             logger.info(f"Пара #{i}: {user1.full_name} и {user2.full_name}")
             logger.info(f"  Общие интересы: {common_topics_str}")
-            logger.info(f"  Форматы встреч: {user1.meeting_format.value} и {user2.meeting_format.value}")
+            
+            # Проверяем наличие атрибута meeting_format
+            if hasattr(user1, 'meeting_format') and hasattr(user2, 'meeting_format') and user1.meeting_format and user2.meeting_format:
+                logger.info(f"  Форматы встреч: {user1.meeting_format.value} и {user2.meeting_format.value}")
+            else:
+                logger.info(f"  Информация о форматах встреч недоступна")
             
             # Проверяем наличие атрибутов work_hours_start и work_hours_end перед их использованием
             if hasattr(user1, 'work_hours_start') and hasattr(user1, 'work_hours_end') and \
@@ -141,4 +182,9 @@ async def test_matching():
 
 if __name__ == "__main__":
     load_dotenv()
-    asyncio.run(test_matching()) 
+    try:
+        asyncio.run(test_matching())
+    except Exception as e:
+        logger.error(f"Ошибка при выполнении теста: {e}", exc_info=True)
+        import sys
+        sys.exit(1) 
