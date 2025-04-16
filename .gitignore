@@ -52,4 +52,8 @@ poetry.lock
 
 # Project specific files
 ТЗ.txt
-Копия Чат-бот.txt 
+Копия Чат-бот.txt
+
+# Systemd service files
+*.service
+service_install_instructions.md 
