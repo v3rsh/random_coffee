@@ -55,10 +55,10 @@ async def cmd_admin(message: Message, session: AsyncSession):
         f"🤝 Всего встреч: {total_meetings}\n"
         f"📝 Всего отзывов: {total_feedback}\n\n"
         "*Доступные команды:*\n"
-        "/admin_stats или /adminstats - Подробная статистика\n"
-        "/admin_users или /adminusers - Список пользователей\n"
-        "/admin_meetings или /adminmeetings - Список встреч\n"
-        "/admin_feedback или /adminfeedback - Отзывы пользователей"
+        "/adminstats - Подробная статистика\n"
+        "/adminusers - Список пользователей\n"
+        "/adminmeetings - Список встреч\n"
+        "/adminfeedback - Отзывы пользователей"
         f"{test_mode_info}"
     )
     
