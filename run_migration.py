@@ -16,7 +16,7 @@ from database.alter_table import main as alter_table_main
 from database.update_values import main as update_values_main
 from database.migrate_schedule import run_migration as run_user_numbering
 from database.models import Base, Meeting
-from database.db import DB_URL
+from database.db import DATABASE_URL
 
 # Настройка логирования
 logging.basicConfig(
@@ -57,7 +57,7 @@ async def update_meetings_schema():
     Обновляет схему таблицы meetings, добавляя новые поля для тестового режима.
     """
     # Проверяем существование файла базы данных
-    db_file = DB_URL.replace("sqlite+aiosqlite:///", "")
+    db_file = DATABASE_URL.replace("sqlite+aiosqlite:///", "")
     
     if not os.path.exists(db_file):
         logger.error(f"База данных не найдена: {db_file}")
