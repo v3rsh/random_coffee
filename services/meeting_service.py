@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import User, Meeting, Feedback
 from services.user_service import get_recent_meeting_partners, get_matching_users
+from services.test_mode_service import is_test_mode_active, get_accelerated_date, get_real_date
 
 
 async def create_meeting(
@@ -105,9 +106,15 @@ async def get_user_meetings(
     
     if only_active:
         # Учитываем только встречи, которые еще не прошли
+        current_time = datetime.utcnow()
+        
+        # В тестовом режиме используем ускоренное время
+        if is_test_mode_active():
+            current_time = get_accelerated_date(current_time)
+        
         query = query.where(or_(
             Meeting.scheduled_date.is_(None),
-            Meeting.scheduled_date >= datetime.utcnow()
+            Meeting.scheduled_date >= current_time
         ))
     
     result = await session.execute(query.order_by(Meeting.created_at.desc()))
@@ -131,11 +138,16 @@ async def get_pending_feedback_meetings(
     # Сначала находим все встречи пользователя
     user_meetings = await get_user_meetings(session, user_id)
     
+    # Текущее время (с учетом тестового режима, если он активен)
+    current_time = datetime.utcnow()
+    if is_test_mode_active():
+        current_time = get_accelerated_date(current_time)
+    
     # Находим встречи без фидбека от указанного пользователя
     pending_feedback = []
     for meeting in user_meetings:
         # Проверяем только прошедшие встречи с датой
-        if meeting.scheduled_date and meeting.scheduled_date < datetime.utcnow():
+        if meeting.scheduled_date and meeting.scheduled_date < current_time:
             # Проверяем, оставил ли пользователь фидбек
             result = await session.execute(
                 select(Feedback)

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from aiogram import Bot
 from sqlalchemy import select, and_, or_
 
@@ -12,10 +13,14 @@ from database.db import get_session
 from database.models import User, Meeting
 from handlers.notifications import send_meeting_reminder, send_feedback_request, send_reactivation_reminder
 from services.meeting_service import create_meeting, get_pending_feedback_meetings
+from services.test_mode_service import is_test_mode_active
 from collections import defaultdict
 import random
 
 logger = logging.getLogger(__name__)
+
+# Глобальная переменная для хранения экземпляра планировщика
+_scheduler = None
 
 
 async def weekly_pairing_job():
@@ -64,11 +69,18 @@ async def check_meetings_job():
         now = datetime.now()
         one_hour_later = now + timedelta(hours=1)
         
+        # Учитываем тестовый режим, если он активен
+        if is_test_mode_active():
+            from services.test_mode_service import get_accelerated_date
+            now = get_accelerated_date(now)
+            one_hour_later = get_accelerated_date(one_hour_later)
+        
         query = select(Meeting).where(
             and_(
-                Meeting.meeting_date >= now,
-                Meeting.meeting_date <= one_hour_later,
-                Meeting.is_completed == False
+                Meeting.scheduled_date >= now,
+                Meeting.scheduled_date <= one_hour_later,
+                Meeting.is_completed == False,
+                Meeting.is_cancelled == False
             )
         )
         
@@ -95,15 +107,23 @@ async def check_feedback_job():
     
     session = get_session()()
     try:
-        # Получаем встречи, которые завершились вчера
+        # Получаем встречи, которые завершились недавно
         yesterday = datetime.now() - timedelta(days=1)
         today = datetime.now()
         
+        # Учитываем тестовый режим, если он активен
+        if is_test_mode_active():
+            from services.test_mode_service import get_accelerated_date
+            yesterday = get_accelerated_date(yesterday)
+            today = get_accelerated_date(today)
+        
         query = select(Meeting).where(
             and_(
-                Meeting.meeting_date >= yesterday,
-                Meeting.meeting_date <= today,
-                Meeting.is_completed == False
+                Meeting.scheduled_date >= yesterday,
+                Meeting.scheduled_date <= today,
+                Meeting.is_completed == False,
+                Meeting.is_cancelled == False,
+                Meeting.feedback_requested == False
             )
         )
         
@@ -301,6 +321,12 @@ def setup_scheduler(bot=None):
     :param bot: Экземпляр бота. Если None, будет создан новый.
     :return: Экземпляр планировщика
     """
+    global _scheduler
+    
+    # Если планировщик уже существует, останавливаем его
+    if _scheduler is not None:
+        _scheduler.shutdown()
+    
     # Если bot не передан, создаем его
     if bot is None:
         from dotenv import load_dotenv
@@ -310,40 +336,88 @@ def setup_scheduler(bot=None):
     # Сохраняем бота в глобальную переменную для использования в задачах
     globals()["bot"] = bot
     
-    scheduler = AsyncIOScheduler()
+    _scheduler = AsyncIOScheduler()
     
-    # Еженедельное создание пар (по понедельникам в 10:00)
-    scheduler.add_job(
-        weekly_pairing_job,
-        trigger=CronTrigger(day_of_week="mon", hour=10, minute=0),
-        id="weekly_pairing",
-        replace_existing=True
-    )
-    
-    # Проверка предстоящих встреч (каждый час)
-    scheduler.add_job(
-        check_meetings_job,
-        trigger=CronTrigger(hour="*", minute=0),
-        id="check_meetings",
-        replace_existing=True
-    )
-    
-    # Проверка фидбека (каждый день в 18:00)
-    scheduler.add_job(
-        check_feedback_job,
-        trigger=CronTrigger(hour=18, minute=0),
-        id="check_feedback",
-        replace_existing=True
-    )
-    
-    # Напоминание неактивным пользователям (каждый понедельник в 12:00)
-    scheduler.add_job(
-        reactivation_reminder_job,
-        trigger=CronTrigger(day_of_week="mon", hour=12, minute=0),
-        id="reactivation_reminder",
-        replace_existing=True
-    )
+    if is_test_mode_active():
+        # Тестовый режим - более частые интервалы
+        logger.info("Настройка планировщика в тестовом режиме")
+        
+        # Создание пар - каждые 12 минут (1 рабочая неделя = 1 час)
+        _scheduler.add_job(
+            weekly_pairing_job,
+            trigger=IntervalTrigger(minutes=12),
+            id="weekly_pairing_test",
+            replace_existing=True
+        )
+        
+        # Проверка предстоящих встреч - каждые 2 минуты (1 рабочий день = 12 минут)
+        _scheduler.add_job(
+            check_meetings_job,
+            trigger=IntervalTrigger(minutes=2),
+            id="check_meetings_test",
+            replace_existing=True
+        )
+        
+        # Проверка фидбека - каждые 12 минут
+        _scheduler.add_job(
+            check_feedback_job,
+            trigger=IntervalTrigger(minutes=12),
+            id="check_feedback_test",
+            replace_existing=True
+        )
+        
+        # Напоминание неактивным пользователям - каждые 12 минут
+        _scheduler.add_job(
+            reactivation_reminder_job,
+            trigger=IntervalTrigger(minutes=12),
+            id="reactivation_reminder_test",
+            replace_existing=True
+        )
+    else:
+        # Обычный режим - стандартные интервалы
+        logger.info("Настройка планировщика в обычном режиме")
+        
+        # Еженедельное создание пар (по понедельникам в 10:00)
+        _scheduler.add_job(
+            weekly_pairing_job,
+            trigger=CronTrigger(day_of_week="mon", hour=10, minute=0),
+            id="weekly_pairing",
+            replace_existing=True
+        )
+        
+        # Проверка предстоящих встреч (каждый час)
+        _scheduler.add_job(
+            check_meetings_job,
+            trigger=CronTrigger(hour="*", minute=0),
+            id="check_meetings",
+            replace_existing=True
+        )
+        
+        # Проверка фидбека (каждый день в 18:00)
+        _scheduler.add_job(
+            check_feedback_job,
+            trigger=CronTrigger(hour=18, minute=0),
+            id="check_feedback",
+            replace_existing=True
+        )
+        
+        # Напоминание неактивным пользователям (каждый понедельник в 12:00)
+        _scheduler.add_job(
+            reactivation_reminder_job,
+            trigger=CronTrigger(day_of_week="mon", hour=12, minute=0),
+            id="reactivation_reminder",
+            replace_existing=True
+        )
     
     # Запускаем планировщик
-    scheduler.start()
-    return scheduler 
+    _scheduler.start()
+    return _scheduler
+
+
+def reconfigure_scheduler():
+    """
+    Перенастраивает планировщик в соответствии с текущим режимом работы.
+    Вызывается при включении/отключении тестового режима.
+    """
+    logger.info("Перенастройка планировщика")
+    return setup_scheduler(bot=globals().get("bot")) 

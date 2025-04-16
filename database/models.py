@@ -113,11 +113,14 @@ class Meeting(Base):
     id = Column(Integer, primary_key=True)
     user1_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
     user2_id = Column(BigInteger, ForeignKey("users.telegram_id"), nullable=False)
-    meeting_date = Column(DateTime, nullable=True)
+    scheduled_date = Column(DateTime, nullable=True)  # Переименовано с meeting_date для согласованности
     meeting_format = Column(SQLAlchemyEnum(MeetingFormat), nullable=True)
     meeting_location = Column(String(255), nullable=True)
     is_confirmed = Column(Boolean, default=False)
     is_completed = Column(Boolean, default=False)
+    is_cancelled = Column(Boolean, default=False)  # Новое поле для отмененных встреч
+    feedback_requested = Column(Boolean, default=False)  # Новое поле для отслеживания отправки запроса на фидбек
+    reminder_sent = Column(Boolean, default=False)  # Новое поле для отслеживания отправки напоминаний
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -127,7 +130,7 @@ class Meeting(Base):
     feedbacks = relationship("Feedback", back_populates="meeting")
 
     def __repr__(self):
-        return f"<Meeting(id={self.id}, user1_id={self.user1_id}, user2_id={self.user2_id}, date={self.meeting_date})>"
+        return f"<Meeting(id={self.id}, user1_id={self.user1_id}, user2_id={self.user2_id}, date={self.scheduled_date})>"
 
 
 class Feedback(Base):

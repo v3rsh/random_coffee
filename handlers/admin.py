@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.models import User, Meeting, Feedback
 from services.user_service import get_user, get_active_users
 from services.meeting_service import get_user_meetings
+from services.test_mode_service import activate_test_mode, deactivate_test_mode, get_test_mode_status, is_test_mode_active
+from scheduler import reconfigure_scheduler
 
 # Создаем роутер для административных команд
 admin_router = Router()
@@ -39,6 +41,12 @@ async def cmd_admin(message: Message, session: AsyncSession):
     total_meetings = await session.scalar(select(func.count(Meeting.id)))
     total_feedback = await session.scalar(select(func.count(Feedback.id)))
     
+    # Проверяем статус тестового режима
+    test_mode_info = ""
+    if is_test_mode_active():
+        test_mode_status = get_test_mode_status()
+        test_mode_info = f"\n\n🧪 *ТЕСТОВЫЙ РЕЖИМ*\n{test_mode_status}"
+    
     # Формируем сообщение со статистикой
     stats_message = (
         "📊 *Статистика Random Coffee*\n\n"
@@ -51,6 +59,7 @@ async def cmd_admin(message: Message, session: AsyncSession):
         "/admin_users или /adminusers - Список пользователей\n"
         "/admin_meetings или /adminmeetings - Список встреч\n"
         "/admin_feedback или /adminfeedback - Отзывы пользователей"
+        f"{test_mode_info}"
     )
     
     await message.answer(stats_message, parse_mode="Markdown")
@@ -214,4 +223,59 @@ async def cmd_admin_feedback(message: Message, session: AsyncSession):
             f"Дата: {feedback.created_at.strftime('%d.%m.%Y %H:%M')}\n\n"
         )
     
-    await message.answer(feedback_message, parse_mode="Markdown") 
+    await message.answer(feedback_message, parse_mode="Markdown")
+
+
+@admin_router.message(Command("admin_testmode", "testmode", "test_mode"))
+async def cmd_admin_testmode(message: Message, session: AsyncSession):
+    """
+    Скрытая команда для включения/отключения тестового режима.
+    """
+    if not is_admin(message.from_user.id):
+        return
+    
+    # Получаем аргументы команды
+    args = message.text.split()
+    action = args[1].lower() if len(args) > 1 else "status"
+    
+    if action == "on":
+        # Включаем тестовый режим
+        if activate_test_mode():
+            await message.answer("🧪 Тестовый режим активирован!\n"
+                               "⏱ Время ускорено: 1 час = 5 рабочих дней\n"
+                               "📅 Встречи и уведомления будут происходить чаще\n\n"
+                               "Для отключения используйте: /testmode off")
+            # Перенастраиваем планировщик
+            reconfigure_scheduler()
+        else:
+            await message.answer("⚠️ Тестовый режим уже активен")
+    
+    elif action == "off":
+        # Отключаем тестовый режим
+        if deactivate_test_mode():
+            await message.answer("🔄 Тестовый режим деактивирован\n"
+                               "⏱ Восстановлен обычный временной режим\n\n"
+                               "Для повторного включения используйте: /testmode on")
+            # Перенастраиваем планировщик
+            reconfigure_scheduler()
+        else:
+            await message.answer("⚠️ Тестовый режим не был активен")
+    
+    else:
+        # Показываем статус
+        status = get_test_mode_status()
+        commands_help = (
+            "\n\nДоступные команды:\n"
+            "/testmode on - Включить тестовый режим\n"
+            "/testmode off - Выключить тестовый режим"
+        )
+        await message.answer(f"{status}{commands_help}")
+
+
+# Алиасы для скрытой команды тестового режима
+@admin_router.message(Command("tm", "tmode"))
+async def cmd_admin_testmode_alias(message: Message, session: AsyncSession):
+    """
+    Алиас для команды тестового режима.
+    """
+    await cmd_admin_testmode(message, session) 
