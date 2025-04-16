@@ -321,6 +321,12 @@ async def process_interests_done(callback: CallbackQuery, state: FSMContext, ses
     """
     await callback.answer()
     
+    # Получаем пользователя из базы данных
+    user = await get_user(session, callback.from_user.id)
+    if not user:
+        await callback.message.answer("Ошибка: пользователь не найден")
+        return
+    
     user_data = await state.get_data()
     selected_interests = user_data.get("selected_interests", [])
     
@@ -395,6 +401,11 @@ async def process_days_done(callback: CallbackQuery, state: FSMContext, session:
     user_data = await state.get_data()
     selected_days = user_data.get("selected_days", [])
     
+    # Если дни не выбраны, просим пользователя выбрать хотя бы один день
+    if not selected_days:
+        await callback.answer("Пожалуйста, выберите хотя бы один день недели", show_alert=True)
+        return
+    
     # Преобразуем список дней в строку, разделенную запятыми
     days_str = ",".join(selected_days)
     
@@ -424,30 +435,35 @@ async def process_time_slot(callback: CallbackQuery, state: FSMContext, session:
     """
     await callback.answer()
     
-    # Получаем выбранный слот
-    selected_slot = callback.data.split("_")[1]
+    try:
+        # Получаем выбранный слот
+        selected_slot = callback.data.split("_")[1]
+        
+        # Сохраняем данные
+        await state.update_data(available_time_slot=selected_slot)
+        
+        # Обновляем в БД
+        await update_user(
+            session, 
+            callback.from_user.id, 
+            {"available_time_slot": selected_slot}
+        )
+        
+        # Переходим к добавлению фото
+        await callback.message.edit_text(
+            f"Отлично! Временной слот {selected_slot} сохранен."
+        )
+        
+        # Спрашиваем о фото
+        await callback.message.answer(
+            "Хочешь добавить фото?",
+            reply_markup=create_yes_no_keyboard("Да, загружаю", "Нет, спасибо")
+        )
+        await state.set_state(RegistrationStates.waiting_for_photo)
     
-    # Сохраняем данные
-    await state.update_data(available_time_slot=selected_slot)
-    
-    # Обновляем в БД
-    await update_user(
-        session, 
-        callback.from_user.id, 
-        {"available_time_slot": selected_slot}
-    )
-    
-    # Переходим к добавлению фото
-    await callback.message.edit_text(
-        f"Отлично! Временной слот {selected_slot} сохранен."
-    )
-    
-    # Спрашиваем о фото
-    await callback.message.answer(
-        "Хочешь добавить фото?",
-        reply_markup=create_yes_no_keyboard("Да, загружаю", "Нет, спасибо")
-    )
-    await state.set_state(RegistrationStates.waiting_for_photo)
+    except Exception as e:
+        logger.error(f"Ошибка при сохранении временного слота: {e}")
+        await callback.message.answer("Произошла ошибка при сохранении временного слота. Пожалуйста, попробуйте еще раз.")
 
 
 @registration_router.message(StateFilter(RegistrationStates.waiting_for_photo), F.photo)
