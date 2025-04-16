@@ -47,16 +47,16 @@ async def cmd_admin(message: Message, session: AsyncSession):
         f"🤝 Всего встреч: {total_meetings}\n"
         f"📝 Всего отзывов: {total_feedback}\n\n"
         "*Доступные команды:*\n"
-        "/admin_stats - Подробная статистика\n"
-        "/admin_users - Список пользователей\n"
-        "/admin_meetings - Список встреч\n"
-        "/admin_feedback - Отзывы пользователей"
+        "/admin_stats или /adminstats - Подробная статистика\n"
+        "/admin_users или /adminusers - Список пользователей\n"
+        "/admin_meetings или /adminmeetings - Список встреч\n"
+        "/admin_feedback или /adminfeedback - Отзывы пользователей"
     )
     
     await message.answer(stats_message, parse_mode="Markdown")
 
 
-@admin_router.message(Command("admin_stats"))
+@admin_router.message(Command("admin_stats", "adminstats"))
 async def cmd_admin_stats(message: Message, session: AsyncSession):
     """
     Показывает подробную статистику.
@@ -102,7 +102,7 @@ async def cmd_admin_stats(message: Message, session: AsyncSession):
     await message.answer(stats_message, parse_mode="Markdown")
 
 
-@admin_router.message(Command("admin_users"))
+@admin_router.message(Command("admin_users", "adminusers"))
 async def cmd_admin_users(message: Message, session: AsyncSession):
     """
     Показывает список пользователей.
@@ -145,7 +145,7 @@ async def cmd_admin_users(message: Message, session: AsyncSession):
     await message.answer(users_message, parse_mode="Markdown")
 
 
-@admin_router.message(Command("admin_meetings"))
+@admin_router.message(Command("admin_meetings", "adminmeetings"))
 async def cmd_admin_meetings(message: Message, session: AsyncSession):
     """
     Показывает список последних встреч.
@@ -181,7 +181,7 @@ async def cmd_admin_meetings(message: Message, session: AsyncSession):
     await message.answer(meetings_message, parse_mode="Markdown")
 
 
-@admin_router.message(Command("admin_feedback"))
+@admin_router.message(Command("admin_feedback", "adminfeedback"))
 async def cmd_admin_feedback(message: Message, session: AsyncSession):
     """
     Показывает последние отзывы.
