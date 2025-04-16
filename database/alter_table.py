@@ -42,6 +42,15 @@ def alter_users_table():
             cursor.execute("ALTER TABLE users ADD COLUMN available_time_slot TEXT")
             cursor.execute("UPDATE users SET available_time_slot = available_time")
         
+        # Проверяем и добавляем колонки для рабочих часов
+        if "work_hours_start" not in columns:
+            logger.info("Добавление колонки work_hours_start в таблицу users")
+            cursor.execute("ALTER TABLE users ADD COLUMN work_hours_start TEXT")
+        
+        if "work_hours_end" not in columns:
+            logger.info("Добавление колонки work_hours_end в таблицу users")
+            cursor.execute("ALTER TABLE users ADD COLUMN work_hours_end TEXT")
+        
         # Сохраняем изменения
         conn.commit()
         logger.info("Структура таблицы users успешно обновлена")

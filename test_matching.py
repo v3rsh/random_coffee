@@ -129,8 +129,14 @@ async def test_matching():
             logger.info(f"Пара #{i}: {user1.full_name} и {user2.full_name}")
             logger.info(f"  Общие интересы: {common_topics_str}")
             logger.info(f"  Форматы встреч: {user1.meeting_format.value} и {user2.meeting_format.value}")
-            logger.info(f"  Рабочие часы: {user1.work_hours_start}-{user1.work_hours_end} и "
-                       f"{user2.work_hours_start}-{user2.work_hours_end}")
+            
+            # Проверяем наличие атрибутов work_hours_start и work_hours_end перед их использованием
+            if hasattr(user1, 'work_hours_start') and hasattr(user1, 'work_hours_end') and \
+               hasattr(user2, 'work_hours_start') and hasattr(user2, 'work_hours_end'):
+                logger.info(f"  Рабочие часы: {user1.work_hours_start}-{user1.work_hours_end} и "
+                          f"{user2.work_hours_start}-{user2.work_hours_end}")
+            else:
+                logger.info(f"  Информация о рабочих часах недоступна")
 
 
 if __name__ == "__main__":

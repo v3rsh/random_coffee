@@ -73,6 +73,8 @@ class User(Base):
     office = Column(String(255), nullable=True)
     available_days = Column(String(255), nullable=True)  # Хранит список дней в виде строки (разделенной запятыми)
     available_time_slot = Column(String(255), nullable=True)  # Хранит выбранный временной слот
+    work_hours_start = Column(String(5), nullable=True)  # Время начала рабочего дня (формат "ЧЧ:ММ")
+    work_hours_end = Column(String(5), nullable=True)  # Время окончания рабочего дня (формат "ЧЧ:ММ")
     photo_id = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
     registration_complete = Column(Boolean, default=False)
